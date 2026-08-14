@@ -1,0 +1,100 @@
+from django.db import transaction
+from django.db.models import Count, Sum, Prefetch
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.response import Response
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .models import *
+from .serializers import *
+from .permissions import *
+
+def allowed_stores(user): return Store.objects.all() if user.role==User.Role.ADMIN else user.stores.all()
+class MeViewSet(viewsets.ViewSet):
+    def list(self,request): return Response(UserSerializer(request.user).data)
+class StoreViewSet(viewsets.ModelViewSet):
+    serializer_class=StoreSerializer; permission_classes=[AdminWritePermission]
+    def get_queryset(self): return allowed_stores(self.request.user).filter(active=True).annotate(fridge_count=Count('fridges',filter=models.Q(fridges__active=True))).order_by('name')
+    @action(detail=True)
+    def fridges(self,request,pk=None):
+        store=self.get_object(); qs=store.fridges.filter(active=True).annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
+        return Response(FridgeSerializer(qs,many=True,context={'request':request}).data)
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset=Product.objects.all(); serializer_class=ProductSerializer; permission_classes=[AdminWritePermission]; filterset_fields=['barcode','sku']
+    def get_queryset(self):
+        q=super().get_queryset(); s=self.request.query_params.get('search')
+        return q.filter(models.Q(name__icontains=s)|models.Q(barcode__icontains=s)|models.Q(sku__icontains=s)) if s else q
+class FridgeViewSet(viewsets.ModelViewSet):
+    serializer_class=FridgeSerializer; permission_classes=[AdminWritePermission,AssignedStorePermission]
+    def get_queryset(self): return Fridge.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store').prefetch_related('assignments__product').annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
+    def perform_create(self,s):
+        if not allowed_stores(self.request.user).filter(pk=s.validated_data['store'].pk).exists(): raise PermissionDenied()
+        s.save()
+    @action(detail=True)
+    def products(self,request,pk=None): return Response(FridgeProductSerializer(self.get_object().assignments.filter(active=True).select_related('product'),many=True,context={'request':request}).data)
+class FridgeProductViewSet(viewsets.ModelViewSet):
+    serializer_class=FridgeProductSerializer; permission_classes=[AdminWritePermission]
+    def get_queryset(self): return FridgeProduct.objects.filter(fridge__store__in=allowed_stores(self.request.user)).select_related('fridge','product')
+    def perform_create(self,s):
+        if not allowed_stores(self.request.user).filter(pk=s.validated_data['fridge'].store_id).exists(): raise PermissionDenied()
+        s.save()
+class SessionViewSet(viewsets.ModelViewSet):
+    serializer_class=SessionSerializer
+    def get_queryset(self):
+        q=RefillSession.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store','employee').annotate(checked_count=Count('fridge_checks',filter=models.Q(fridge_checks__completed=True)),total_units=Sum('requirements__required_quantity'))
+        q=q if self.request.user.role!=User.Role.EMPLOYEE else q.filter(employee=self.request.user)
+        store=self.request.query_params.get('store'); return q.filter(store_id=store) if store else q
+    def perform_create(self,s):
+        store=s.validated_data['store']
+        if not allowed_stores(self.request.user).filter(pk=store.pk).exists(): raise PermissionDenied()
+        active=self.get_queryset().filter(store=store,employee=self.request.user,status__in=[RefillSession.Status.IN_PROGRESS,RefillSession.Status.PICKING,RefillSession.Status.REFILLING]).first()
+        if active: raise ValidationError({'existing_session':active.id})
+        s.save(employee=self.request.user)
+    @action(detail=True,methods=['post'])
+    def generate_pick_list(self,request,pk=None):
+        obj=self.get_object(); obj.status=RefillSession.Status.PICKING; obj.save(update_fields=['status','updated_at']); return self.pick_list(request,pk)
+    @action(detail=True,url_path='pick-list')
+    def pick_list(self,request,pk=None):
+        rows=self.get_object().requirements.filter(required_quantity__gt=0).values('product','product__name','product__barcode','product__sku','product__product_photo').annotate(total_required=Sum('required_quantity'),total_picked=Sum('picked_quantity')).order_by('product__name')
+        out=[]
+        for row in rows:
+            row['breakdown']=list(self.get_object().requirements.filter(product_id=row['product'],required_quantity__gt=0).values('fridge','fridge__name','required_quantity','picked_quantity'))
+            out.append(row)
+        return Response(out)
+    @action(detail=True,methods=['post'])
+    def start_refilling(self,request,pk=None):
+        obj=self.get_object(); obj.status=RefillSession.Status.REFILLING; obj.save(update_fields=['status','updated_at']); return Response(SessionSerializer(obj,context={'request':request}).data)
+    @action(detail=True,methods=['post'])
+    def complete(self,request,pk=None):
+        obj=self.get_object(); obj.status=RefillSession.Status.COMPLETED; obj.completed_at=timezone.now(); obj.save(update_fields=['status','completed_at','updated_at']); return Response(SessionSerializer(obj,context={'request':request}).data)
+class RequirementViewSet(viewsets.ModelViewSet):
+    serializer_class=RequirementSerializer
+    def get_queryset(self):
+        q=RefillRequirement.objects.filter(refill_session__store__in=allowed_stores(self.request.user)).select_related('product','fridge','refill_session')
+        for key in ['refill_session','fridge','product']:
+            if self.request.query_params.get(key): q=q.filter(**{f'{key}_id':self.request.query_params[key]})
+        return q
+    def perform_create(self,s):
+        session=s.validated_data.get('refill_session') or RefillSession.objects.get(pk=self.request.data['refill_session'])
+        s.save(refill_session=session)
+    def update(self,request,*args,**kwargs):
+        with transaction.atomic():
+            obj=RefillRequirement.objects.select_for_update().get(pk=kwargs['pk'])
+            supplied=request.data.get('version')
+            if supplied is not None and int(supplied)!=obj.version: return Response({'detail':'Stale update','current':RequirementSerializer(obj).data},status=409)
+            request.data['version']=obj.version+1
+            return super().update(request,*args,**kwargs)
+class CheckViewSet(viewsets.ModelViewSet):
+    serializer_class=FridgeCheckSerializer
+    def get_queryset(self):
+        q=FridgeCheck.objects.filter(refill_session__store__in=allowed_stores(self.request.user)).select_related('fridge','refill_session')
+        for key in ['refill_session','fridge']:
+            if self.request.query_params.get(key): q=q.filter(**{f'{key}_id':self.request.query_params[key]})
+        return q
+    def perform_create(self,s): s.save(checked_by=self.request.user)
+class ShortageViewSet(viewsets.ModelViewSet):
+    serializer_class=ShortageSerializer
+    def get_queryset(self): return StockShortage.objects.filter(refill_session__store__in=allowed_stores(self.request.user)).select_related('product','refill_session')
+    def perform_create(self,s):
+        required=s.validated_data['required_quantity']; found=s.validated_data['found_quantity']; s.save(reported_by=self.request.user,short_quantity=max(0,required-found))

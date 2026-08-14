@@ -1,0 +1,2 @@
+import React from 'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{registerSW}from'virtual:pwa-register';import App from'./App';import'./styles.css';
+registerSW({onNeedRefresh(){if(confirm('A new version is ready. Update now?'))location.reload()},onOfflineReady(){document.dispatchEvent(new Event('pwa-offline-ready'))}});createRoot(document.getElementById('root')!).render(<React.StrictMode><BrowserRouter><App/></BrowserRouter></React.StrictMode>);
