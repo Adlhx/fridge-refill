@@ -9,5 +9,5 @@ class AssignedStorePermission(BasePermission):
 class AdminWritePermission(BasePermission):
     def has_permission(self,request,view):
         if request.method in SAFE_METHODS: return True
-        if getattr(view,'basename','') in ['stores','product']: return request.user.role==User.Role.ADMIN
+        if getattr(view,'basename','')=='stores': return request.user.role==User.Role.ADMIN
         return request.user.role in [User.Role.ADMIN,User.Role.MANAGER]

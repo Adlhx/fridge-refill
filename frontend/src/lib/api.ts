@@ -1,6 +1,6 @@
 const BASE=import.meta.env.VITE_API_URL||'/api';
 export const token={get:()=>sessionStorage.getItem('access'),set:(v:string)=>sessionStorage.setItem('access',v),clear:()=>sessionStorage.clear()};
-export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const res=await fetch(`${BASE}${path}`,{...init,headers:{'Content-Type':'application/json',...(token.get()?{Authorization:`Bearer ${token.get()}`}:{}) ,...init.headers}});if(!res.ok){let detail;try{detail=await res.json()}catch{detail={detail:res.statusText}}throw Object.assign(new Error(detail.detail||'Request failed'),{status:res.status,data:detail})}return res.status===204?undefined as T:res.json()}
+export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const isForm=init.body instanceof FormData;const res=await fetch(`${BASE}${path}`,{...init,headers:{...(isForm?{}:{'Content-Type':'application/json'}),...(token.get()?{Authorization:`Bearer ${token.get()}`}:{}) ,...init.headers}});if(!res.ok){let detail;try{detail=await res.json()}catch{detail={detail:res.statusText}}throw Object.assign(new Error(detail.detail||'Request failed'),{status:res.status,data:detail})}return res.status===204?undefined as T:res.json()}
 export const getResults=<T>(value:{results:T[]}|T[])=>Array.isArray(value)?value:value.results;
 type Pending={path:string;body:unknown}; const KEY='fridge-refill-pending';
 export function queueChange(change:Pending){const q:Pending[]=JSON.parse(localStorage.getItem(KEY)||'[]');q.push(change);localStorage.setItem(KEY,JSON.stringify(q))}

@@ -1,0 +1,2 @@
+import{describe,expect,it}from'vitest';import{groupByShelf,physicalOrder}from'./layout';
+describe('physical fridge ordering',()=>{it('sorts top-to-bottom and left-to-right',()=>{const rows=[{name:'Product B',shelf_number:2,position:1},{name:'Product A',shelf_number:1,position:2},{name:'Product C',shelf_number:1,position:1}];expect(physicalOrder(rows).map(x=>x.name)).toEqual(['Product C','Product A','Product B']);expect(groupByShelf(rows).map(([s])=>s)).toEqual(['1','2'])})})

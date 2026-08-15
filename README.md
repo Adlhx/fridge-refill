@@ -56,6 +56,8 @@ Copy `.env.example` to `.env`. Replace `DJANGO_SECRET_KEY` and database credenti
 
 Change these passwords outside local development. Create another administrator with `python manage.py createsuperuser`.
 
+`python manage.py seed_hornchurch` idempotently adds Hornchurch Esso, six display areas, and their shelf/position ordered product assignments. It is safe to run after every deployment and will not duplicate global products or assignments.
+
 ## Running tests
 
 ```bash
@@ -81,7 +83,7 @@ Server-side querysets restrict employees and managers to assigned stores. Quanti
 
 ## Frontend routes
 
-`/login`, `/stores`, `/fridges`, `/fridges/:id`, `/pick-list`, `/refill`, and `/history`. Login always leads to mandatory store selection. Change Store clears active store/session UI state so stores cannot be mixed.
+`/login`, `/stores`, `/fridges`, `/fridges/:id`, `/pick-list`, `/refill`, and `/history`. Managers/admins can use `/stores/:storeId/fridges/:fridgeId/layout` and `/admin/products` for shelf layouts and iPhone product correction. Login always leads to mandatory store selection. Change Store clears active store/session UI state so stores cannot be mixed.
 
 ## Docker and production deployment
 

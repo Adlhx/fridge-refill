@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Count, Sum, Prefetch
+from django.db.models import Count, Sum, Prefetch, OuterRef, Subquery
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -23,8 +23,11 @@ class StoreViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     queryset=Product.objects.all(); serializer_class=ProductSerializer; permission_classes=[AdminWritePermission]; filterset_fields=['barcode','sku']
     def get_queryset(self):
-        q=super().get_queryset(); s=self.request.query_params.get('search')
-        return q.filter(models.Q(name__icontains=s)|models.Q(barcode__icontains=s)|models.Q(sku__icontains=s)) if s else q
+        q=super().get_queryset(); s=self.request.query_params.get('search'); verification=self.request.query_params.get('verification')
+        if s: q=q.filter(models.Q(name__icontains=s)|models.Q(barcode__icontains=s)|models.Q(sku__icontains=s))
+        if verification=='needs': q=q.filter(needs_verification=True)
+        if verification=='verified': q=q.filter(needs_verification=False)
+        return q
 class FridgeViewSet(viewsets.ModelViewSet):
     serializer_class=FridgeSerializer; permission_classes=[AdminWritePermission,AssignedStorePermission]
     def get_queryset(self): return Fridge.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store').prefetch_related('assignments__product').annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
@@ -39,6 +42,24 @@ class FridgeProductViewSet(viewsets.ModelViewSet):
     def perform_create(self,s):
         if not allowed_stores(self.request.user).filter(pk=s.validated_data['fridge'].store_id).exists(): raise PermissionDenied()
         s.save()
+    @action(detail=False,methods=['post'],url_path='save-layout')
+    def save_layout(self,request):
+        rows=request.data.get('assignments',[])
+        with transaction.atomic():
+            allowed={x.id:x for x in self.get_queryset().select_for_update().filter(id__in=[r.get('id') for r in rows])}
+            if len(allowed)!=len(rows): raise PermissionDenied('One or more assignments are outside your stores.')
+            for index,row in enumerate(rows):
+                item=allowed[row['id']]; item.shelf_number=max(1,int(row['shelf_number'])); item.position=max(1,int(row['position'])); item.display_order=index; item.save(update_fields=['shelf_number','position','display_order','updated_at'])
+        return Response(FridgeProductSerializer(sorted(allowed.values(),key=lambda x:(x.shelf_number,x.position)),many=True,context={'request':request}).data)
+    @action(detail=False,methods=['post'],url_path='bulk-add')
+    def bulk_add(self,request):
+        fridge=Fridge.objects.get(pk=request.data.get('fridge'))
+        if not allowed_stores(request.user).filter(pk=fridge.store_id).exists(): raise PermissionDenied()
+        shelf=max(1,int(request.data.get('shelf_number',1))); existing=fridge.assignments.filter(shelf_number=shelf).aggregate(v=models.Max('position'))['v'] or 0; made=[]
+        for offset,product_id in enumerate(request.data.get('products',[]),1):
+            obj,created=FridgeProduct.objects.get_or_create(fridge=fridge,product_id=product_id,defaults={'shelf_number':shelf,'position':existing+offset,'display_order':existing+offset})
+            if created: made.append(obj)
+        return Response(FridgeProductSerializer(made,many=True,context={'request':request}).data,status=201)
 class SessionViewSet(viewsets.ModelViewSet):
     serializer_class=SessionSerializer
     def get_queryset(self):
@@ -71,7 +92,8 @@ class SessionViewSet(viewsets.ModelViewSet):
 class RequirementViewSet(viewsets.ModelViewSet):
     serializer_class=RequirementSerializer
     def get_queryset(self):
-        q=RefillRequirement.objects.filter(refill_session__store__in=allowed_stores(self.request.user)).select_related('product','fridge','refill_session')
+        layout=FridgeProduct.objects.filter(fridge_id=OuterRef('fridge_id'),product_id=OuterRef('product_id'),active=True)
+        q=RefillRequirement.objects.filter(refill_session__store__in=allowed_stores(self.request.user)).select_related('product','fridge','refill_session').annotate(shelf_number=Subquery(layout.values('shelf_number')[:1]),position=Subquery(layout.values('position')[:1])).order_by('fridge__display_order','shelf_number','position','id')
         for key in ['refill_session','fridge','product']:
             if self.request.query_params.get(key): q=q.filter(**{f'{key}_id':self.request.query_params[key]})
         return q
