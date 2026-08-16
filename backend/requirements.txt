@@ -5,3 +5,4 @@ django-cors-headers==4.7.0
 psycopg[binary]==3.2.9
 Pillow==11.3.0
 gunicorn==23.0.0
+pypdf==6.16.1

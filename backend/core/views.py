@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import *
 from .serializers import *
 from .permissions import *
+from .planogram import PlanogramError, parse_planogram
 
 def allowed_stores(user): return Store.objects.all() if user.role==User.Role.ADMIN else user.stores.all()
 class MeViewSet(viewsets.ViewSet):
@@ -36,6 +37,42 @@ class FridgeViewSet(viewsets.ModelViewSet):
         s.save()
     @action(detail=True)
     def products(self,request,pk=None): return Response(FridgeProductSerializer(self.get_object().assignments.filter(active=True).select_related('product'),many=True,context={'request':request}).data)
+    @action(detail=True,methods=['post'],url_path='import-layout-preview')
+    def import_layout_preview(self,request,pk=None):
+        self.get_object()
+        upload=request.FILES.get('file')
+        if not upload: raise ValidationError({'file':'Choose a PDF to import.'})
+        if upload.size>15*1024*1024: raise ValidationError({'file':'The PDF must be 15 MB or smaller.'})
+        if not upload.name.lower().endswith('.pdf'): raise ValidationError({'file':'Only PDF files are supported.'})
+        try: rows=parse_planogram(upload)
+        except PlanogramError as exc: raise ValidationError({'file':str(exc)})
+        barcodes=[row['barcode'] for row in rows if row['barcode']]; skus=[row['londis_code'] for row in rows if row['londis_code']]
+        products=Product.objects.filter(models.Q(barcode__in=barcodes)|models.Q(sku__in=skus))
+        by_barcode={p.barcode:p for p in products if p.barcode}; by_sku={p.sku:p for p in products if p.sku}
+        matched=0
+        for row in rows:
+            product=by_barcode.get(row['barcode']) or by_sku.get(row['londis_code'])
+            row['product_id']=product.id if product else None; row['match']='existing' if product else 'new'
+            matched+=bool(product)
+        return Response({'rows':rows,'summary':{'products':len(rows),'shelves':len({r['shelf_number'] for r in rows}),'matched':matched,'new':len(rows)-matched}})
+    @action(detail=True,methods=['post'],url_path='apply-layout-import')
+    def apply_layout_import(self,request,pk=None):
+        fridge=self.get_object(); rows=request.data.get('rows') or []
+        if not rows: raise ValidationError({'rows':'Preview a PDF before applying the layout.'})
+        seen=set()
+        with transaction.atomic():
+            fridge.assignments.select_for_update().update(active=False)
+            for index,row in enumerate(sorted(rows,key=lambda r:(int(r['shelf_number']),int(r['position'])))):
+                product=Product.objects.filter(pk=row.get('product_id')).first() if row.get('product_id') else None
+                if not product and row.get('barcode'): product=Product.objects.filter(barcode=row['barcode']).first()
+                if not product and row.get('londis_code'): product=Product.objects.filter(sku=row['londis_code']).first()
+                if not product:
+                    product=Product.objects.create(name=row['name'],barcode=row.get('barcode',''),sku=row.get('londis_code',''),size=row.get('pack_size',''),pack_size=row.get('pack_size',''),category='Alcohol',needs_verification=True)
+                if product.id in seen: raise ValidationError({'rows':f"{product.name} appears more than once; duplicate fridge assignments are not supported."})
+                seen.add(product.id)
+                notes=f"Planogram {row.get('m_code','')} · {row.get('facings',1)} facing(s)".strip()
+                FridgeProduct.objects.update_or_create(fridge=fridge,product=product,defaults={'shelf_number':max(1,int(row['shelf_number'])),'position':max(1,int(row['position'])),'display_order':index,'notes':notes,'active':True})
+        return Response({'detail':'Layout imported','products':len(seen),'shelves':len({int(r['shelf_number']) for r in rows})})
 class FridgeProductViewSet(viewsets.ModelViewSet):
     serializer_class=FridgeProductSerializer; permission_classes=[AdminWritePermission]
     def get_queryset(self): return FridgeProduct.objects.filter(fridge__store__in=allowed_stores(self.request.user)).select_related('fridge','product')
