@@ -179,7 +179,7 @@ CORS_ALLOWED_ORIGINS = [
     x.strip()
     for x in os.getenv(
         'CORS_ALLOWED_ORIGINS',
-        'http://localhost:5173,https://fridge-refill.vercel.app/'
+        'http://localhost:5173,https://fridge-refill.vercel.app'
     ).split(',')
     if x.strip()
 ]
