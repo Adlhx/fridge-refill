@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout upstream
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Push to Dinal fork
+      - name: Push latest main to Dinal fork
         run: |
           git remote add dinal https://x-access-token:${{ secrets.DINAL_PAT }}@github.com/Dinal2005/fridge-refill.git
           git push dinal main:main --force
