@@ -27,7 +27,7 @@ def health_check(request):
 
 def status_page(request):
     healthy, _ = _health_status()
-    colour = "#16a34a" if healthy else "#dc2626"
+    database_colour = "#16a34a" if healthy else "#dc2626"
     title = "All systems operational" if healthy else "Service unavailable"
     database = "Connected successfully" if healthy else "Connection failed"
 
@@ -47,17 +47,19 @@ def status_page(request):
     p {{ color: #64748b; margin: 0 0 28px; }}
     .row {{ display: flex; align-items: center; justify-content: space-between;
       padding: 17px 0; border-top: 1px solid #e2e8f0; gap: 16px; }}
-    .result {{ display: flex; align-items: center; gap: 9px; font-weight: 650; color: {colour}; }}
-    .dot {{ width: 11px; height: 11px; border-radius: 50%; background: {colour};
-      box-shadow: 0 0 0 4px {colour}22; }}
+    .result {{ display: flex; align-items: center; gap: 9px; font-weight: 650; }}
+    .server {{ color: #16a34a; }}
+    .database {{ color: {database_colour}; }}
+    .dot {{ width: 11px; height: 11px; border-radius: 50%; background: currentColor;
+      box-shadow: 0 0 0 4px currentColor; opacity: .9; }}
   </style>
 </head>
 <body>
   <main>
     <h1>{title}</h1>
     <p>Fridge Refill service status</p>
-    <div class="row"><span>Web server</span><span class="result"><i class="dot"></i>Running successfully</span></div>
-    <div class="row"><span>Database</span><span class="result"><i class="dot"></i>{database}</span></div>
+    <div class="row"><span>Web server</span><span class="result server"><i class="dot"></i>Running successfully</span></div>
+    <div class="row"><span>Database</span><span class="result database"><i class="dot"></i>{database}</span></div>
   </main>
 </body>
 </html>"""
