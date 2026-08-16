@@ -16,7 +16,10 @@ class MeViewSet(viewsets.ViewSet):
     def list(self,request): return Response(UserSerializer(request.user).data)
 class StoreViewSet(viewsets.ModelViewSet):
     serializer_class=StoreSerializer; permission_classes=[AdminWritePermission]
-    def get_queryset(self): return allowed_stores(self.request.user).filter(active=True).annotate(fridge_count=Count('fridges',filter=models.Q(fridges__active=True))).order_by('name')
+    def get_queryset(self):
+        q=allowed_stores(self.request.user)
+        if not (self.request.user.role==User.Role.ADMIN and self.request.query_params.get('all')=='true'): q=q.filter(active=True)
+        return q.annotate(fridge_count=Count('fridges',filter=models.Q(fridges__active=True))).order_by('name')
     @action(detail=True)
     def fridges(self,request,pk=None):
         store=self.get_object(); qs=store.fridges.filter(active=True).annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
