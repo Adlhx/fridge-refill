@@ -20,6 +20,14 @@ class FlowTests(APITestCase):
         FridgeProduct.objects.create(fridge=self.f1,product=c,shelf_number=1,position=1)
         names=[x['product_detail']['name'] for x in self.client.get(f'/api/fridges/{self.f1.id}/products/').json()]
         self.assertEqual(names,['Product C','Product A','Product B'])
+    def test_fridge_list_is_lightweight_and_detail_omits_inactive_assignments(self):
+        active=Product.objects.create(name='Active product',sku='ACTIVE'); old=Product.objects.create(name='Old product',sku='OLD')
+        FridgeProduct.objects.create(fridge=self.f1,product=active,active=True)
+        FridgeProduct.objects.create(fridge=self.f1,product=old,active=False)
+        listed=self.client.get(f'/api/stores/{self.s.id}/fridges/').json()[0]
+        self.assertNotIn('assignments',listed); self.assertEqual(listed['product_count'],1)
+        detail=self.client.get(f'/api/fridges/{self.f1.id}/').json()
+        self.assertEqual([row['product_detail']['name'] for row in detail['assignments']],['Active product'])
     def test_refill_requirements_are_in_physical_order(self):
         a=Product.objects.create(name='Product A',sku='RA'); b=Product.objects.create(name='Product B',sku='RB'); c=Product.objects.create(name='Product C',sku='RC')
         for product,shelf,position in [(b,2,1),(a,1,2),(c,1,1)]:

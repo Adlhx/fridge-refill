@@ -18,6 +18,9 @@ class FridgeProductSerializer(serializers.ModelSerializer):
 class FridgeSerializer(serializers.ModelSerializer):
     product_count=serializers.IntegerField(read_only=True); assignments=FridgeProductSerializer(many=True,read_only=True)
     class Meta: model=Fridge; fields='__all__'
+class FridgeListSerializer(serializers.ModelSerializer):
+    product_count=serializers.IntegerField(read_only=True)
+    class Meta: model=Fridge; fields=['id','store','name','fridge_number','location_description','photo','display_order','active','product_count']
 class RequirementSerializer(serializers.ModelSerializer):
     product_detail=ProductSerializer(source='product',read_only=True); fridge_name=serializers.CharField(source='fridge.name',read_only=True); shelf_number=serializers.IntegerField(read_only=True); position=serializers.IntegerField(read_only=True)
     class Meta: model=RefillRequirement; fields='__all__'; read_only_fields=['status']

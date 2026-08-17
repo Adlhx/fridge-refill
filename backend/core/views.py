@@ -23,7 +23,7 @@ class StoreViewSet(viewsets.ModelViewSet):
     @action(detail=True)
     def fridges(self,request,pk=None):
         store=self.get_object(); qs=store.fridges.filter(active=True).annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
-        return Response(FridgeSerializer(qs,many=True,context={'request':request}).data)
+        return Response(FridgeListSerializer(qs,many=True,context={'request':request}).data)
 class ProductViewSet(viewsets.ModelViewSet):
     queryset=Product.objects.all(); serializer_class=ProductSerializer; permission_classes=[AdminWritePermission]; filterset_fields=['barcode','sku']
     def get_queryset(self):
@@ -34,7 +34,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         return q
 class FridgeViewSet(viewsets.ModelViewSet):
     serializer_class=FridgeSerializer; permission_classes=[AdminWritePermission,AssignedStorePermission]
-    def get_queryset(self): return Fridge.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store').prefetch_related('assignments__product').annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
+    def get_queryset(self):
+        active_assignments=FridgeProduct.objects.filter(active=True).select_related('product')
+        return Fridge.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store').prefetch_related(Prefetch('assignments',queryset=active_assignments)).annotate(product_count=Count('assignments',filter=models.Q(assignments__active=True)))
     def perform_create(self,s):
         if not allowed_stores(self.request.user).filter(pk=s.validated_data['store'].pk).exists(): raise PermissionDenied()
         s.save()

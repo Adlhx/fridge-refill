@@ -115,6 +115,8 @@ if db.startswith('postgres'):
             'PASSWORD': u.password,
             'HOST': u.hostname,
             'PORT': u.port or 5432,
+            'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
+            'CONN_HEALTH_CHECKS': True,
         }
     }
 
@@ -201,7 +203,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS':
         'rest_framework.pagination.PageNumberPagination',
 
-    'PAGE_SIZE': 100,
+    'PAGE_SIZE': 250,
 
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
