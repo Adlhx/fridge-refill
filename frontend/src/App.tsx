@@ -1,33 +1,1685 @@
-import{useEffect,useMemo,useState}from'react';import{Navigate,Route,Routes,useLocation,useNavigate,useParams}from'react-router-dom';import{ArrowLeft,Check,ChevronRight,History,Home,PackageCheck,RefreshCw,Search,Settings,Store as StoreIcon,WifiOff}from'lucide-react';import{api,flushQueue,getResults,queueChange,token}from'./lib/api';
-export type Store={id:number;name:string;store_code:string;address:string;description:string;active:boolean;fridge_count:number};type User={id:number;username:string;role:'ADMIN'|'MANAGER'|'EMPLOYEE'};type Product={id:number;name:string;short_name:string;brand:string;variant:string;size:string;package_type:string;barcode:string;sku:string;category:string;product_photo?:string;needs_verification:boolean;active:boolean};type Assignment={id:number;fridge:number;product:number;shelf_number:number;position:number;display_order:number;notes:string;product_detail:Product};type Fridge={id:number;store:number;name:string;fridge_number:string;location_description:string;photo?:string;product_count:number;assignments:Assignment[]};type Session={id:number;store:number;status:string;started_at:string;completed_at?:string;checked_count:number;total_units:number};type Req={id:number;product:number;fridge:number;fridge_name?:string;shelf_number?:number;position?:number;required_quantity:number;picked_quantity:number;refilled_quantity:number;version:number;product_detail:Product};type Pick={product:number;product__name:string;product__barcode:string;product__sku:string;total_required:number;total_picked:number;breakdown:{fridge:number;fridge__name:string;required_quantity:number;picked_quantity:number}[]};
-type ImportRow={page:number;shelf_number:number;position:number;londis_code:string;m_code:string;name:string;pack_size:string;units_per_case:number|null;barcode:string;facings:number;product_id:number|null;match:'existing'|'new'};type ImportPreview={rows:ImportRow[];summary:{products:number;shelves:number;matched:number;new:number}};
-const selected=()=>sessionStorage.getItem('store');const sessionId=()=>sessionStorage.getItem('session');
-function Login(){const nav=useNavigate(),[username,setU]=useState('employee'),[password,setP]=useState('EmployeeDemo123!'),[error,setE]=useState(''),[busy,setB]=useState(false);async function submit(e:React.FormEvent){e.preventDefault();setB(true);setE('');try{const r=await api<{access:string}>('/auth/token/',{method:'POST',body:JSON.stringify({username,password})});token.set(r.access);sessionStorage.removeItem('store');nav('/stores')}catch{setE('Check your username and password.')}finally{setB(false)}}return <main className="auth"><div className="brand-mark">FR</div><p className="eyebrow">FRIDGE REFILL</p><h1>Welcome back</h1><p className="muted">Sign in to start today’s refill.</p><form onSubmit={submit} className="form"><label>Username<input value={username} onChange={e=>setU(e.target.value)} autoComplete="username"/></label><label>Password<input type="password" value={password} onChange={e=>setP(e.target.value)} autoComplete="current-password"/></label>{error&&<p role="alert" className="error">{error}</p>}<button className="primary" disabled={busy}>{busy?'Signing in…':'Sign in'}</button></form></main>}
-function Stores(){const[stores,setStores]=useState<Store[]>([]),[me,setMe]=useState<User>(),[loading,setL]=useState(true),nav=useNavigate();useEffect(()=>{Promise.all([api<any>('/stores/'),api<User>('/me/')]).then(([x,u])=>{setStores(getResults(x));setMe(u)}).catch((e)=>{if(e.status===401){token.clear();nav('/login')}}).finally(()=>setL(false))},[]);async function choose(s:Store){sessionStorage.setItem('store',JSON.stringify(s));try{const all=getResults<Session>(await api<{results:Session[]}|Session[]>(`/refill-sessions/?store=${s.id}`));let active=all.find(x=>x.store===s.id&&!['COMPLETED','CANCELLED'].includes(x.status));if(!active)active=await api<Session>('/refill-sessions/',{method:'POST',body:JSON.stringify({store:s.id})});sessionStorage.setItem('session',String(active.id));nav('/fridges')}catch(e:any){const id=e.data?.existing_session;if(id){sessionStorage.setItem('session',String(id));nav('/fridges')}}}return <main className="page select"><div className="screen-actions"><div><p className="eyebrow">GOOD {new Date().getHours()<12?'MORNING':'AFTERNOON'}</p><h1>Where are you working?</h1></div>{me?.role==='ADMIN'&&<button onClick={()=>nav('/admin/stores')}>Manage stores</button>}</div><p className="muted">Choose a store to begin a new working session.</p>{loading?<Loader/>:<div className="stack">{stores.map(s=><button className="store-card" key={s.id} onClick={()=>choose(s)}><span className="store-icon"><StoreIcon/></span><span><strong>{s.name}</strong><small>{s.address||s.store_code} · {s.fridge_count} fridges</small></span><ChevronRight/></button>)}</div>}<button className="text-button" onClick={()=>{token.clear();nav('/login')}}>Sign out</button></main>}
-function StoreAdmin(){const nav=useNavigate(),[stores,setStores]=useState<Store[]>([]),[editing,setEditing]=useState<Partial<Store>>(),[status,setStatus]=useState(''),[error,setError]=useState('');async function load(){setStores(getResults(await api<any>('/stores/?all=true')))}useEffect(()=>{load().catch(()=>nav('/stores'))},[]);function begin(store?:Store){setEditing(store?{...store}:{name:'',store_code:'',address:'',description:'',active:true});setError('');setStatus('')}async function save(e:React.FormEvent){e.preventDefault();if(!editing)return;setStatus('Saving…');setError('');try{const body={name:editing.name,store_code:editing.store_code,address:editing.address||'',description:editing.description||'',active:editing.active!==false};if(editing.id)await api(`/stores/${editing.id}/`,{method:'PATCH',body:JSON.stringify(body)});else await api('/stores/',{method:'POST',body:JSON.stringify(body)});setEditing(undefined);setStatus('Saved');await load()}catch(e:any){setStatus('');setError(e.data?.store_code?.[0]||e.data?.name?.[0]||e.data?.detail||'Could not save this store.')} }return <main className="page store-admin"><div className="screen-actions"><button className="back" onClick={()=>nav('/stores')}><ArrowLeft/> Stores</button><button onClick={()=>begin()}>+ Add store</button></div><div className="detail-title"><p className="eyebrow">ADMIN</p><h1>Manage stores</h1><span className="save-state">{status}</span></div>{editing&&<form className="product-edit" onSubmit={save}><h2>{editing.id?'Edit store':'Add store'}</h2><label>Store name<input required value={editing.name||''} onChange={e=>setEditing({...editing,name:e.target.value})}/></label><label>Store code<input required value={editing.store_code||''} onChange={e=>setEditing({...editing,store_code:e.target.value.toUpperCase()})}/></label><label>Address<textarea value={editing.address||''} onChange={e=>setEditing({...editing,address:e.target.value})}/></label><label>Description<textarea value={editing.description||''} onChange={e=>setEditing({...editing,description:e.target.value})}/></label><label className="check-label"><input type="checkbox" checked={editing.active!==false} onChange={e=>setEditing({...editing,active:e.target.checked})}/> Active store</label>{error&&<p className="error" role="alert">{error}</p>}<div className="form-actions"><button type="button" onClick={()=>setEditing(undefined)}>Cancel</button><button className="primary">Save store</button></div></form>}<div className="admin-products">{stores.map(s=><button key={s.id} onClick={()=>begin(s)}><span className="store-icon"><StoreIcon/></span><span><strong>{s.name}</strong><small>{s.store_code} · {s.address||'No address'} · {s.fridge_count} fridges</small>{!s.active&&<em>Inactive</em>}</span><ChevronRight/></button>)}</div></main>}
-function Shell({children,title}:{children:React.ReactNode;title?:string}){const nav=useNavigate(),loc=useLocation(),store=selected()?JSON.parse(selected()!):null;return <><header><div><small>{title||'CURRENT STORE'}</small><strong>{store?.name||'Fridge Refill'}</strong></div><div className="header-actions">{store&&loc.pathname==='/fridges'&&<button onClick={()=>nav('/fridges/new')}>+ Fridge</button>}{title==='PRODUCTS'&&<button onClick={()=>nav('/admin/products/new')}>+ Product</button>}{store&&<button onClick={()=>{sessionStorage.removeItem('store');sessionStorage.removeItem('session');nav('/stores')}}>Change store</button>}</div></header><div className="shell">{children}</div><nav className="bottom-nav">{[['/fridges',Home,'Fridges'],['/pick-list',PackageCheck,'Pick List'],['/refill',RefreshCw,'Refill'],['/history',History,'History']].map(([path,Icon,label]:any)=><button className={loc.pathname.startsWith(path)?'active':''} onClick={()=>nav(path)} key={path}><Icon/><span>{label}</span></button>)}</nav></>}
-function Fridges(){const[items,setItems]=useState<Fridge[]>([]),[checks,setChecks]=useState<any[]>([]),nav=useNavigate(),store=JSON.parse(selected()||'null');useEffect(()=>{if(!store)return;Promise.all([api<Fridge[]>(`/stores/${store.id}/fridges/`),api<any>(`/fridge-checks/?refill_session=${sessionId()}`)]).then(([f,c])=>{setItems(f);setChecks(getResults(c))})},[]);if(!store)return <Navigate to="/stores"/>;const done=checks.filter(c=>c.completed).length;return <Shell><section className="hero"><div><p className="eyebrow">TODAY’S ROUND</p><h1>{done} of {items.length} checked</h1></div><span className="progress-num">{items.length?Math.round(done/items.length*100):0}%</span><div className="progress"><i style={{width:`${items.length?done/items.length*100:0}%`}}/></div></section><div className="stack fridge-grid">{items.map((f,i)=>{const check=checks.find(c=>c.fridge===f.id);return <button className="fridge-card" key={f.id} onClick={()=>nav(`/fridges/${f.id}`)}><div className="fridge-photo">{f.photo?<img src={f.photo} alt=""/>:<span>FRIDGE {f.fridge_number}</span>}<em className={check?.completed?'done':''}>{check?.completed?<><Check/> Checked</>:(check?'In progress':'Not checked')}</em></div><div className="card-body"><small>FRIDGE {f.fridge_number}</small><strong>{f.name}</strong><span>{f.product_count} products · {f.location_description}</span></div><ChevronRight/></button>})}</div><button className="primary sticky-action" onClick={async()=>{await api(`/refill-sessions/${sessionId()}/generate_pick_list/`,{method:'POST'});nav('/pick-list')}}>Generate pick list <ChevronRight/></button></Shell>}
-function CheckFridge(){const{id}=useParams(),nav=useNavigate(),[fridge,setF]=useState<Fridge>(),[reqs,setReqs]=useState<Record<number,Req>>({}),[status,setStatus]=useState('Saved');useEffect(()=>{Promise.all([api<Fridge>(`/fridges/${id}/`),api<any>(`/requirements/?refill_session=${sessionId()}&fridge=${id}`)]).then(([f,r])=>{setF(f);setReqs(Object.fromEntries(getResults<Req>(r).map(x=>[x.product,x])))})},[id]);async function setQty(a:Assignment,n:number){n=Math.max(0,Math.floor(Number.isFinite(n)?n:0));const current=reqs[a.product];setStatus(navigator.onLine?'Saving…':'Offline - will sync');if(!current){try{const made=await api<Req>('/requirements/',{method:'POST',body:JSON.stringify({refill_session:Number(sessionId()),fridge:Number(id),product:a.product,required_quantity:n,picked_quantity:0,refilled_quantity:0,version:1})});setReqs(x=>({...x,[a.product]:made}));setStatus('Saved')}catch{setStatus('Could not save')}}else{const optimistic={...current,required_quantity:n};setReqs(x=>({...x,[a.product]:optimistic}));const body={required_quantity:n,version:current.version};try{const saved=await api<Req>(`/requirements/${current.id}/`,{method:'PATCH',body:JSON.stringify(body)});setReqs(x=>({...x,[a.product]:saved}));setStatus('Saved')}catch(e:any){if(!navigator.onLine){queueChange({path:`/requirements/${current.id}/`,body});setStatus('Offline - will sync')}else if(e.status===409){setReqs(x=>({...x,[a.product]:e.data.current}));setStatus('Updated elsewhere')}else setStatus('Could not save')}}}async function finish(){const checks=getResults<any>(await api<any>(`/fridge-checks/?refill_session=${sessionId()}&fridge=${id}`));if(checks[0])await api(`/fridge-checks/${checks[0].id}/`,{method:'PATCH',body:JSON.stringify({completed:true})});else await api('/fridge-checks/',{method:'POST',body:JSON.stringify({refill_session:Number(sessionId()),fridge:Number(id),completed:true})});nav('/fridges')}if(!fridge)return <Shell><Loader/></Shell>;const shelves=Object.entries(fridge.assignments.reduce((all,a)=>{(all[a.shelf_number]??=[]).push(a);return all},{} as Record<number,Assignment[]>)).sort(([a],[b])=>Number(a)-Number(b));return <Shell title="CHECK FRIDGE"><div className="screen-actions"><button className="back" onClick={()=>nav('/fridges')}><ArrowLeft/> Fridges</button><button onClick={()=>nav(`/stores/${fridge.store}/fridges/${fridge.id}/layout`)}>Edit layout</button></div><div className="detail-title"><p className="eyebrow">FRIDGE {fridge.fridge_number}</p><h1>{fridge.name}</h1><span className={status==='Saved'?'save-state':'save-state pending'}>{status.startsWith('Offline')&&<WifiOff/>}{status}</span></div>{fridge.photo&&<img className="detail-photo" src={fridge.photo} alt={`${fridge.name} fridge`}/>}<nav className="shelf-nav" aria-label="Jump to shelf">{shelves.map(([s])=><button key={s} onClick={()=>document.getElementById(`shelf-${s}`)?.scrollIntoView({behavior:'smooth'})}>{s}</button>)}</nav><div className="products shelf-groups">{shelves.map(([s,rows])=><section className="shelf-group" id={`shelf-${s}`} key={s}><h2>Shelf {s}</h2>{rows.sort((a,b)=>a.position-b.position).map(a=>{const q=reqs[a.product]?.required_quantity||0;const detail=[a.product_detail.variant,a.product_detail.size||a.product_detail.short_name].filter(Boolean).join(' · ');return <article className="quantity-row" key={a.id}>{a.product_detail.product_photo?<img src={a.product_detail.product_photo} alt=""/>:<div className="product-placeholder">{a.product_detail.name[0]}</div>}<div className="product-name"><strong>{a.product_detail.name}</strong>{detail&&<small>{detail}</small>}{a.product_detail.needs_verification&&<small className="verify-badge">Needs verification</small>}</div><div className="stepper"><button aria-label={`Decrease ${a.product_detail.name}`} onClick={()=>setQty(a,q-1)}>−</button><input aria-label={`${a.product_detail.name} quantity`} inputMode="numeric" type="number" min="0" value={q} onChange={e=>setQty(a,Number(e.target.value))}/><button aria-label={`Increase ${a.product_detail.name}`} onClick={()=>setQty(a,q+1)}>+</button></div></article>})}</section>)}</div><button className="primary sticky-action" onClick={finish}>Finish fridge <Check/></button></Shell>}
-function PickList(){const[rows,setRows]=useState<Pick[]>([]),[search,setSearch]=useState(''),nav=useNavigate();async function load(){setRows(await api<Pick[]>(`/refill-sessions/${sessionId()}/pick-list/`))}useEffect(()=>{load()},[]);const shown=rows.filter(x=>`${x.product__name} ${x.product__barcode} ${x.product__sku}`.toLowerCase().includes(search.toLowerCase())),done=rows.filter(x=>x.total_picked>=x.total_required).length;async function toggle(row:Pick){const value=row.total_picked>=row.total_required?0:row.total_required;for(const b of row.breakdown){const all=getResults<Req>(await api<any>(`/requirements/?refill_session=${sessionId()}&fridge=${b.fridge}&product=${row.product}`));if(all[0])await api(`/requirements/${all[0].id}/`,{method:'PATCH',body:JSON.stringify({picked_quantity:value?b.required_quantity:0,version:all[0].version})})}await load()}return <Shell><section className="hero"><p className="eyebrow">BACK STORE</p><h1>Pick list</h1><p>{done} / {rows.length} products collected</p><div className="progress"><i style={{width:`${rows.length?done/rows.length*100:0}%`}}/></div></section><label className="search"><Search/><input placeholder="Search product, barcode or SKU" value={search} onChange={e=>setSearch(e.target.value)}/></label><div className="pick-list">{shown.map(row=>{const complete=row.total_picked>=row.total_required;return <article className={complete?'pick-row complete':'pick-row'} key={row.product}><button className="check" aria-label={`Mark ${row.product__name} ${complete?'not collected':'collected'}`} onClick={()=>toggle(row)}>{complete&&<Check/>}</button><div><strong>{row.product__name}</strong>{row.breakdown.map(x=><small key={x.fridge}>{x.fridge__name} × {x.required_quantity}</small>)}<button className="shortage" onClick={async()=>{const found=Number(prompt(`Required: ${row.total_required}. How many found?`,String(row.total_required)));if(Number.isFinite(found)&&found<row.total_required)await api('/shortages/',{method:'POST',body:JSON.stringify({refill_session:Number(sessionId()),product:row.product,required_quantity:row.total_required,found_quantity:found})})}}>Not enough stock</button></div><b>{row.total_required}</b></article>})}{!shown.length&&<Empty text="No matching products"/>}</div><button className="primary sticky-action" onClick={async()=>{await api(`/refill-sessions/${sessionId()}/start_refilling/`,{method:'POST'});nav('/refill')}}>Start refilling <ChevronRight/></button></Shell>}
-function Refill(){const[reqs,setReqs]=useState<Req[]>([]),[checks,setChecks]=useState<any[]>([]),nav=useNavigate();useEffect(()=>{Promise.all([api<any>(`/requirements/?refill_session=${sessionId()}`),api<any>(`/fridge-checks/?refill_session=${sessionId()}`)]).then(([r,c])=>{setReqs(getResults(r));setChecks(getResults(c))})},[]);const groups=useMemo(()=>Object.values(reqs.filter(x=>x.required_quantity>0).reduce((a,x)=>{(a[x.fridge]??={fridge:x.fridge,name:x.fridge_name||`Fridge ${x.fridge}`,rows:[]}).rows.push(x);return a},{} as Record<number,{fridge:number;name:string;rows:Req[]}>)),[reqs]);async function mark(g:any){let c:any=checks.find(x=>x.fridge===g.fridge);if(c)await api(`/fridge-checks/${c.id}/`,{method:'PATCH',body:JSON.stringify({refilled:true})});else c=await api<any>('/fridge-checks/',{method:'POST',body:JSON.stringify({refill_session:Number(sessionId()),fridge:g.fridge,completed:true,refilled:true})});setChecks(x=>x.map(y=>y.id===c.id?c:y).concat(x.some(y=>y.id===c.id)?[]:[c]))}const done=checks.filter(x=>x.refilled).length;return <Shell><section className="hero"><p className="eyebrow">FINAL STEP</p><h1>Refilling</h1><p>{done} / {groups.length} fridges complete</p></section><div className="stack">{groups.map(g=>{const complete=checks.find(x=>x.fridge===g.fridge)?.refilled,shelves=Object.entries(g.rows.reduce((a,x)=>{(a[x.shelf_number||1]??=[]).push(x);return a},{} as Record<number,Req[]>)).sort(([a],[b])=>Number(a)-Number(b));return <article className="refill-card" key={g.fridge}><h2>{g.name}{complete&&<span><Check/> Done</span>}</h2>{shelves.map(([s,rows])=><section className="refill-shelf" key={s}><h3>Shelf {s}</h3>{rows.sort((a,b)=>(a.position||0)-(b.position||0)).map(x=><div key={x.id}><span>{x.product_detail.name}</span><b>{x.picked_quantity||x.required_quantity}</b></div>)}</section>)}<button disabled={complete} onClick={()=>mark(g)}>{complete?'Fridge refilled':'Mark fridge refilled'}</button></article>})}</div><button disabled={done<groups.length} className="primary sticky-action" onClick={async()=>{await api(`/refill-sessions/${sessionId()}/complete/`,{method:'POST'});nav('/history')}}>Complete refill session <Check/></button></Shell>}
-function HistoryPage(){const[items,setItems]=useState<Session[]>([]);useEffect(()=>{api<any>('/history/').then(x=>setItems(getResults(x)))},[]);return <Shell><section className="hero"><p className="eyebrow">YOUR ACTIVITY</p><h1>History</h1></section><div className="stack">{items.map(s=><article className="history-card" key={s.id}><div><strong>{s.status.replace('_',' ')}</strong><small>{new Date(s.started_at).toLocaleString()}</small></div><div><b>{s.checked_count}</b><small>fridges</small></div><div><b>{s.total_units||0}</b><small>units</small></div></article>)}</div></Shell>}
-function AddFridge(){const nav=useNavigate(),store:Store|null=selected()?JSON.parse(selected()!):null,[error,setError]=useState(''),[busy,setBusy]=useState(false);async function save(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!store)return;setBusy(true);setError('');try{const data=new FormData(e.currentTarget);data.set('store',String(store.id));data.set('active','true');data.set('display_order',String(Number(data.get('display_order'))||0));const photo=data.get('photo');if(photo instanceof File&&!photo.size)data.delete('photo');await api('/fridges/',{method:'POST',body:data});nav('/fridges')}catch(e:any){setError(e.data?JSON.stringify(e.data):'Could not create fridge.')}finally{setBusy(false)}}if(!store)return <Navigate to="/stores"/>;return <Shell title="ADD FRIDGE"><button className="back" onClick={()=>nav('/fridges')}><ArrowLeft/> Fridges</button><form className="product-edit" onSubmit={save}><p className="eyebrow">{store.name}</p><h1>Add fridge</h1><label>Fridge name<input name="name" required placeholder="Coffee / Protein / Dairy"/></label><label>Fridge number<input name="fridge_number" required placeholder="7"/></label><label>Location<input name="location_description" placeholder="Rear wall, beside checkout"/></label><label>Display order<input name="display_order" type="number" min="0" defaultValue="0"/></label><label>Fridge photo<input name="photo" type="file" accept="image/*" capture="environment"/></label>{error&&<p className="error" role="alert">{error}</p>}<button className="primary" disabled={busy}>{busy?'Creating…':'Create fridge'}</button></form></Shell>}
-function AddProduct(){const nav=useNavigate(),[error,setError]=useState(''),[busy,setBusy]=useState(false);async function save(e:React.FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError('');try{const data=new FormData(e.currentTarget);data.set('active','true');data.set('needs_verification',String(data.get('needs_verification')==='on'));const photo=data.get('product_photo');if(photo instanceof File&&!photo.size)data.delete('product_photo');await api('/products/',{method:'POST',body:data});nav('/admin/products')}catch(e:any){setError(e.data?.barcode?.[0]||e.data?.sku?.[0]||e.data?.name?.[0]||'Could not create product. Check the details and try again.')}finally{setBusy(false)}}return <Shell title="ADD PRODUCT"><button className="back" onClick={()=>nav('/admin/products')}><ArrowLeft/> Products</button><form className="product-edit" onSubmit={save}><h1>Add product</h1>{[['name','Product name'],['short_name','Short name / flavour'],['brand','Brand'],['variant','Variant / flavour'],['size','Size'],['package_type','Package type'],['barcode','Barcode'],['sku','SKU'],['category','Category'],['pack_size','Pack size']].map(([key,label])=><label key={key}>{label}<input name={key} required={key==='name'}/></label>)}<label className="check-label"><input name="needs_verification" type="checkbox"/> Needs verification</label><label>Product photo<input name="product_photo" type="file" accept="image/*" capture="environment"/></label>{error&&<p className="error" role="alert">{error}</p>}<button className="primary" disabled={busy}>{busy?'Creating…':'Create product'}</button></form></Shell>}
-function LayoutEditor(){const{fridgeId}=useParams(),nav=useNavigate(),[fridge,setFridge]=useState<Fridge>(),[rows,setRows]=useState<Assignment[]>([]),[products,setProducts]=useState<Product[]>([]),[selectedProducts,setSelected]=useState<number[]>([]),[shelf,setShelf]=useState(1),[status,setStatus]=useState('');async function load(){const[f,p]=await Promise.all([api<Fridge>(`/fridges/${fridgeId}/`),api<any>('/products/')]);setFridge(f);setRows([...f.assignments].sort((a,b)=>a.shelf_number-b.shelf_number||a.position-b.position));setProducts(getResults(p))}useEffect(()=>{load()},[fridgeId]);function normalize(next:Assignment[]){const sorted=[...next].sort((a,b)=>a.shelf_number-b.shelf_number||a.position-b.position);let current=0,pos=0;return sorted.map((x,i)=>{if(x.shelf_number!==current){current=x.shelf_number;pos=0}return{...x,position:++pos,display_order:i}})}function move(id:number,direction:-1|1){const ordered=normalize(rows),index=ordered.findIndex(x=>x.id===id),target=index+direction;if(target<0||target>=ordered.length)return;[ordered[index],ordered[target]]=[ordered[target],ordered[index]];if(ordered[index].shelf_number!==ordered[target].shelf_number)ordered[index].shelf_number=ordered[target].shelf_number;setRows(normalize(ordered))}function moveShelf(id:number,direction:-1|1){setRows(normalize(rows.map(x=>x.id===id?{...x,shelf_number:Math.max(1,x.shelf_number+direction)}:x)))}async function save(){setStatus('Saving…');await api('/fridge-products/save-layout/',{method:'POST',body:JSON.stringify({assignments:normalize(rows).map(x=>({id:x.id,shelf_number:x.shelf_number,position:x.position}))})});setStatus('Saved');await load()}async function add(){if(!selectedProducts.length)return;await api('/fridge-products/bulk-add/',{method:'POST',body:JSON.stringify({fridge:Number(fridgeId),shelf_number:shelf,products:selectedProducts})});setSelected([]);await load()}if(!fridge)return <Shell><Loader/></Shell>;const groups=Object.entries(rows.reduce((a,x)=>{(a[x.shelf_number]??=[]).push(x);return a},{} as Record<number,Assignment[]>));return <Shell title="LAYOUT EDITOR"><div className="screen-actions"><button className="back" onClick={()=>nav('/fridges')}><ArrowLeft/> Fridges</button><button onClick={()=>nav('/admin/products')}>Edit products</button></div><div className="detail-title"><p className="eyebrow">FRIDGE {fridge.fridge_number}</p><h1>Edit fridge layout</h1><span className="save-state">{status}</span></div><div className="layout-groups">{groups.map(([number,items])=><section className="layout-shelf" key={number}><h2>Shelf {number}</h2>{items.map(x=><article key={x.id}><span className="drag-handle" aria-hidden>☰</span><div><strong>{x.product_detail.name}</strong><small>Position {x.position}</small></div><div className="move-controls"><button onClick={()=>move(x.id,-1)} aria-label="Move up">↑</button><button onClick={()=>move(x.id,1)} aria-label="Move down">↓</button><button onClick={()=>moveShelf(x.id,-1)} aria-label="Move to shelf above">S−</button><button onClick={()=>moveShelf(x.id,1)} aria-label="Move to shelf below">S+</button></div></article>)}</section>)}</div><section className="add-products"><h2>Add existing products</h2><label>Shelf<input type="number" min="1" value={shelf} onChange={e=>setShelf(Number(e.target.value))}/></label><select multiple value={selectedProducts.map(String)} onChange={e=>setSelected(Array.from(e.target.selectedOptions,x=>Number(x.value)))}>{products.filter(p=>!rows.some(r=>r.product===p.id)).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select><button onClick={add}>+ Add selected products</button></section><button className="primary sticky-action" onClick={save}>Save layout <Check/></button></Shell>}
-function LayoutPdfImport({fridgeId,onApplied}:{fridgeId:string;onApplied:()=>Promise<void>}){const[file,setFile]=useState<File>(),[preview,setPreview]=useState<ImportPreview>(),[busy,setBusy]=useState(false),[error,setError]=useState('');async function analyse(){if(!file)return;setBusy(true);setError('');try{const body=new FormData();body.set('file',file);setPreview(await api<ImportPreview>(`/fridges/${fridgeId}/import-layout-preview/`,{method:'POST',body}))}catch(e:any){setError(e.data?.file?.[0]||e.data?.detail||'Could not read this PDF.')}finally{setBusy(false)}}async function apply(){if(!preview||!confirm(`Replace this fridge layout with ${preview.summary.products} imported products?`))return;setBusy(true);setError('');try{await api(`/fridges/${fridgeId}/apply-layout-import/`,{method:'POST',body:JSON.stringify({rows:preview.rows})});setPreview(undefined);setFile(undefined);await onApplied()}catch(e:any){setError(e.data?.rows?.[0]||e.data?.detail||'Could not apply this layout.')}finally{setBusy(false)}}return <section className="layout-import"><h2>Import supplier PDF</h2><p className="muted">Upload a structured planogram PDF. Review all matches before replacing this fridge layout.</p><div className="import-controls"><input type="file" accept="application/pdf,.pdf" onChange={e=>{setFile(e.target.files?.[0]);setPreview(undefined);setError('')}}/><button disabled={!file||busy} onClick={analyse}>{busy?'Analysing…':'Analyse PDF'}</button></div>{error&&<p className="error" role="alert">{error}</p>}{preview&&<><div className="import-summary"><strong>{preview.summary.products} products · {preview.summary.shelves} shelves</strong><span>{preview.summary.matched} matched · {preview.summary.new} new</span></div><div className="import-review">{preview.rows.map(row=><article key={`${row.shelf_number}-${row.position}`}><span>Shelf {row.shelf_number} · {row.position}</span><strong>{row.name}</strong><small>{row.pack_size} · {row.barcode||row.londis_code}</small><em className={row.match}>{row.match==='existing'?'Matched':'New · verify'}</em></article>)}</div><p className="warning">Applying this import replaces the current fridge layout. New products will be marked “Needs verification”.</p><button className="primary" disabled={busy} onClick={apply}>{busy?'Applying…':'Apply reviewed layout'}</button></>}</section>}
-function ShelfLayoutEditor(){
-  const {fridgeId}=useParams(),nav=useNavigate();
-  const [fridge,setFridge]=useState<Fridge>(),[rows,setRows]=useState<Assignment[]>([]),[products,setProducts]=useState<Product[]>([]),[selectedByShelf,setSelected]=useState<Record<number,number[]>>({}),[extraShelves,setExtraShelves]=useState<number[]>([]),[status,setStatus]=useState('');
-  async function load(){const[f,p]=await Promise.all([api<Fridge>(`/fridges/${fridgeId}/`),api<any>('/products/')]);setFridge(f);setRows([...f.assignments].sort((a,b)=>a.shelf_number-b.shelf_number||a.position-b.position));setProducts(getResults(p))}
-  useEffect(()=>{load()},[fridgeId]);
-  function normalize(next:Assignment[]){const sorted=[...next].sort((a,b)=>a.shelf_number-b.shelf_number||a.position-b.position);let current=0,pos=0;return sorted.map((x,i)=>{if(x.shelf_number!==current){current=x.shelf_number;pos=0}return{...x,position:++pos,display_order:i}})}
-  function move(id:number,direction:-1|1){const ordered=normalize(rows),index=ordered.findIndex(x=>x.id===id),target=index+direction;if(target<0||target>=ordered.length)return;[ordered[index],ordered[target]]=[ordered[target],ordered[index]];if(ordered[index].shelf_number!==ordered[target].shelf_number)ordered[index].shelf_number=ordered[target].shelf_number;setRows(normalize(ordered))}
-  function moveShelf(id:number,direction:-1|1){setRows(normalize(rows.map(x=>x.id===id?{...x,shelf_number:Math.max(1,x.shelf_number+direction)}:x)))}
-  async function addToShelf(shelf:number){const chosen=selectedByShelf[shelf]||[];if(!chosen.length)return;setStatus(`Adding to Shelf ${shelf}…`);await api('/fridge-products/bulk-add/',{method:'POST',body:JSON.stringify({fridge:Number(fridgeId),shelf_number:shelf,products:chosen})});setSelected(x=>({...x,[shelf]:[]}));setStatus('Added');await load()}
-  async function save(){setStatus('Saving…');await api('/fridge-products/save-layout/',{method:'POST',body:JSON.stringify({assignments:normalize(rows).map(x=>({id:x.id,shelf_number:x.shelf_number,position:x.position}))})});setStatus('Saved');await load()}
-  if(!fridge)return <Shell><Loader/></Shell>;
-  const existing=Array.from(new Set(rows.map(x=>x.shelf_number))),max=Math.max(0,...existing,...extraShelves),shelves=Array.from(new Set([...existing,...extraShelves])).sort((a,b)=>a-b),available=products.filter(p=>!rows.some(r=>r.product===p.id));
-  return <Shell title="LAYOUT EDITOR"><div className="screen-actions"><button className="back" onClick={()=>nav('/fridges')}><ArrowLeft/> Fridges</button><button onClick={()=>nav('/admin/products')}>Edit products</button></div><div className="detail-title"><p className="eyebrow">FRIDGE {fridge.fridge_number}</p><h1>Edit fridge layout</h1><span className="save-state">{status}</span></div><LayoutPdfImport fridgeId={fridgeId!} onApplied={load}/><div className="layout-groups">{shelves.map(number=>{const items=rows.filter(x=>x.shelf_number===number).sort((a,b)=>a.position-b.position),chosen=selectedByShelf[number]||[];return <section className="layout-shelf" key={number}><h2>Shelf {number}</h2>{items.map(x=><article key={x.id}><span className="drag-handle" aria-hidden>☰</span><div><strong>{x.product_detail.name}</strong><small>Position {x.position}</small></div><div className="move-controls"><button onClick={()=>move(x.id,-1)} aria-label="Move up">↑</button><button onClick={()=>move(x.id,1)} aria-label="Move down">↓</button><button onClick={()=>moveShelf(x.id,-1)} aria-label="Move to shelf above">S−</button><button onClick={()=>moveShelf(x.id,1)} aria-label="Move to shelf below">S+</button></div></article>)}<div className="shelf-add"><label>Add products to Shelf {number}<select multiple value={chosen.map(String)} onChange={e=>setSelected(x=>({...x,[number]:Array.from(e.target.selectedOptions,o=>Number(o.value))}))}>{available.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><button disabled={!chosen.length} onClick={()=>addToShelf(number)}>+ Add {chosen.length?`${chosen.length} product${chosen.length===1?'':'s'}`:'product'} to Shelf {number}</button></div></section>})}</div><button className="add-shelf-button" onClick={()=>setExtraShelves(x=>[...x,max+1])}>+ Add Shelf</button><button className="primary sticky-action" onClick={save}>Save layout <Check/></button></Shell>}
-function ProductAdmin(){const[products,setProducts]=useState<Product[]>([]),[filter,setFilter]=useState('all'),[editing,setEditing]=useState<Product>(),[status,setStatus]=useState('');async function load(){const suffix=filter==='all'?'':`?verification=${filter}`;setProducts(getResults(await api<any>(`/products/${suffix}`)))}useEffect(()=>{load()},[filter]);async function save(e:React.FormEvent<HTMLFormElement>){e.preventDefault();if(!editing)return;setStatus('Saving…');const data=new FormData(e.currentTarget);data.set('needs_verification',String(data.get('needs_verification')==='on'));const updated=await api<Product>(`/products/${editing.id}/`,{method:'PATCH',body:data});setEditing(updated);setStatus('Saved');await load()}async function scan(file?:File){if(!file||!(window as any).BarcodeDetector)return alert('Camera barcode detection is not supported here. Enter the barcode manually.');try{const detector=new (window as any).BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128']});const codes=await detector.detect(await createImageBitmap(file));if(codes[0])setEditing(x=>x?{...x,barcode:codes[0].rawValue}:x);else alert('No barcode found. Try again or enter it manually.')}catch{alert('Could not scan this image. Enter the barcode manually.')}}return <Shell title="PRODUCTS"><section className="hero"><p className="eyebrow">ADMIN / MANAGER</p><h1>Products</h1></section><div className="filter-tabs">{[['all','All'],['verified','Verified'],['needs','Needs verification']].map(([v,l])=><button className={filter===v?'active':''} onClick={()=>setFilter(v)} key={v}>{l}</button>)}</div>{editing?<form className="product-edit" onSubmit={save}><button type="button" className="back" onClick={()=>setEditing(undefined)}><ArrowLeft/> Products</button><h2>Edit product</h2>{[['name','Product name'],['brand','Brand'],['variant','Variant / flavour'],['size','Size'],['package_type','Package type'],['barcode','Barcode'],['sku','SKU'],['category','Category']].map(([key,label])=><label key={key}>{label}<input name={key} value={(editing as any)[key]||''} onChange={e=>setEditing({...editing,[key]:e.target.value})}/></label>)}<label className="check-label"><input name="needs_verification" type="checkbox" checked={editing.needs_verification} onChange={e=>setEditing({...editing,needs_verification:e.target.checked})}/> Needs verification</label><label>Product photo<input name="product_photo" type="file" accept="image/*" capture="environment"/></label><label>Scan barcode with camera<input type="file" accept="image/*" capture="environment" onChange={e=>scan(e.target.files?.[0])}/></label><button className="primary">Save</button><span className="save-state">{status}</span></form>:<div className="admin-products">{products.map(p=><button key={p.id} onClick={()=>setEditing(p)}>{p.product_photo?<img src={p.product_photo} alt=""/>:<span className="product-placeholder">{p.name[0]}</span>}<span><strong>{p.name}</strong><small>{[p.variant,p.size,p.barcode].filter(Boolean).join(' · ')||'Details not completed'}</small>{p.needs_verification&&<em>Needs verification</em>}</span><ChevronRight/></button>)}</div>}</Shell>}
-function Empty({text}:{text:string}){return <div className="empty"><PackageCheck/><p>{text}</p></div>}function Loader(){return <div className="loader" aria-label="Loading"/>}function Guard({children}:{children:React.ReactNode}){return token.get()?children:<Navigate to="/login"/>}
-export default function App(){useEffect(()=>{flushQueue()},[]);return <Routes><Route path="/login" element={<Login/>}/><Route path="/stores" element={<Guard><Stores/></Guard>}/><Route path="/admin/stores" element={<Guard><StoreAdmin/></Guard>}/><Route path="/fridges" element={<Guard><Fridges/></Guard>}/><Route path="/fridges/new" element={<Guard><AddFridge/></Guard>}/><Route path="/fridges/:id" element={<Guard><CheckFridge/></Guard>}/><Route path="/stores/:storeId/fridges/:fridgeId/layout" element={<Guard><ShelfLayoutEditor/></Guard>}/><Route path="/admin/products" element={<Guard><ProductAdmin/></Guard>}/><Route path="/admin/products/new" element={<Guard><AddProduct/></Guard>}/><Route path="/pick-list" element={<Guard><PickList/></Guard>}/><Route path="/refill" element={<Guard><Refill/></Guard>}/><Route path="/history" element={<Guard><HistoryPage/></Guard>}/><Route path="*" element={<Navigate to={token.get()?'/stores':'/login'}/>}/></Routes>}
+import { useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Check, ChevronRight, History, Home, PackageCheck, RefreshCw, Search, Settings, Store as StoreIcon, WifiOff } from "lucide-react";
+import { api, flushQueue, getResults, queueChange, token } from "./lib/api";
+export type Store = {
+  id: number;
+  name: string;
+  store_code: string;
+  address: string;
+  description: string;
+  active: boolean;
+  fridge_count: number;
+};
+type User = {
+  id: number;
+  username: string;
+  role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+};
+type Product = {
+  id: number;
+  name: string;
+  short_name: string;
+  brand: string;
+  variant: string;
+  size: string;
+  package_type: string;
+  barcode: string;
+  sku: string;
+  category: string;
+  product_photo?: string;
+  needs_verification: boolean;
+  active: boolean;
+};
+type Assignment = {
+  id: number;
+  fridge: number;
+  product: number;
+  shelf_number: number;
+  position: number;
+  display_order: number;
+  notes: string;
+  product_detail: Product;
+};
+type Fridge = {
+  id: number;
+  store: number;
+  name: string;
+  fridge_number: string;
+  location_description: string;
+  photo?: string;
+  product_count: number;
+  assignments: Assignment[];
+};
+type Session = {
+  id: number;
+  store: number;
+  status: string;
+  started_at: string;
+  completed_at?: string;
+  checked_count: number;
+  total_units: number;
+};
+type Req = {
+  id: number;
+  product: number;
+  fridge: number;
+  fridge_name?: string;
+  shelf_number?: number;
+  position?: number;
+  required_quantity: number;
+  picked_quantity: number;
+  refilled_quantity: number;
+  version: number;
+  product_detail: Product;
+};
+type Pick = {
+  product: number;
+  product__name: string;
+  product__barcode: string;
+  product__sku: string;
+  total_required: number;
+  total_picked: number;
+  breakdown: {
+    fridge: number;
+    fridge__name: string;
+    required_quantity: number;
+    picked_quantity: number;
+  }[];
+};
+type ImportRow = {
+  page: number;
+  shelf_number: number;
+  position: number;
+  londis_code: string;
+  m_code: string;
+  name: string;
+  pack_size: string;
+  units_per_case: number | null;
+  barcode: string;
+  facings: number;
+  product_id: number | null;
+  match: "existing" | "new";
+};
+type ImportPreview = {
+  rows: ImportRow[];
+  summary: { products: number; shelves: number; matched: number; new: number };
+};
+const selected = () => sessionStorage.getItem("store");
+const sessionId = () => sessionStorage.getItem("session");
+function Login() {
+  const nav = useNavigate(),
+    [username, setU] = useState("employee"),
+    [password, setP] = useState("EmployeeDemo123!"),
+    [error, setE] = useState(""),
+    [busy, setB] = useState(false);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setB(true);
+    setE("");
+    try {
+      const r = await api<{ access: string }>("/auth/token/", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      token.set(r.access);
+      sessionStorage.removeItem("store");
+      nav("/stores");
+    } catch {
+      setE("Check your username and password.");
+    } finally {
+      setB(false);
+    }
+  }
+  return (
+    <main className="auth">
+      <div className="brand-mark">FR</div>
+      <p className="eyebrow">FRIDGE REFILL</p>
+      <h1>Welcome back</h1>
+      <p className="muted">Sign in to start today’s refill.</p>
+      <form onSubmit={submit} className="form">
+        <label>
+          Username
+          <input value={username} onChange={(e) => setU(e.target.value)} autoComplete="username" />
+        </label>
+        <label>
+          Password
+          <input type="password" value={password} onChange={(e) => setP(e.target.value)} autoComplete="current-password" />
+        </label>
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+        <button className="primary" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+    </main>
+  );
+}
+function Stores() {
+  const [stores, setStores] = useState<Store[]>([]),
+    [me, setMe] = useState<User>(),
+    [loading, setL] = useState(true),
+    nav = useNavigate();
+  useEffect(() => {
+    Promise.all([api<any>("/stores/"), api<User>("/me/")])
+      .then(([x, u]) => {
+        setStores(getResults(x));
+        setMe(u);
+      })
+      .catch((e) => {
+        if (e.status === 401) {
+          token.clear();
+          nav("/login");
+        }
+      })
+      .finally(() => setL(false));
+  }, []);
+  async function choose(s: Store) {
+    sessionStorage.setItem("store", JSON.stringify(s));
+    try {
+      const all = getResults<Session>(await api<{ results: Session[] } | Session[]>(`/refill-sessions/?store=${s.id}`));
+      let active = all.find((x) => x.store === s.id && !["COMPLETED", "CANCELLED"].includes(x.status));
+      if (!active)
+        active = await api<Session>("/refill-sessions/", {
+          method: "POST",
+          body: JSON.stringify({ store: s.id }),
+        });
+      sessionStorage.setItem("session", String(active.id));
+      nav("/fridges");
+    } catch (e: any) {
+      const id = e.data?.existing_session;
+      if (id) {
+        sessionStorage.setItem("session", String(id));
+        nav("/fridges");
+      }
+    }
+  }
+  return (
+    <main className="page select">
+      <div className="screen-actions">
+        <div>
+          <p className="eyebrow">GOOD {new Date().getHours() < 12 ? "MORNING" : "AFTERNOON"}</p>
+          <h1>Where are you working?</h1>
+        </div>
+        {me?.role === "ADMIN" && <button onClick={() => nav("/admin/stores")}>Manage stores</button>}
+      </div>
+      <p className="muted">Choose a store to begin a new working session.</p>
+      {loading ? (
+        <Loader />
+      ) : (
+        <div className="stack">
+          {stores.map((s) => (
+            <button className="store-card" key={s.id} onClick={() => choose(s)}>
+              <span className="store-icon">
+                <StoreIcon />
+              </span>
+              <span>
+                <strong>{s.name}</strong>
+                <small>
+                  {s.address || s.store_code} · {s.fridge_count} fridges
+                </small>
+              </span>
+              <ChevronRight />
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        className="text-button"
+        onClick={() => {
+          token.clear();
+          nav("/login");
+        }}
+      >
+        Sign out
+      </button>
+    </main>
+  );
+}
+function StoreAdmin() {
+  const nav = useNavigate(),
+    [stores, setStores] = useState<Store[]>([]),
+    [editing, setEditing] = useState<Partial<Store>>(),
+    [status, setStatus] = useState(""),
+    [error, setError] = useState("");
+  async function load() {
+    setStores(getResults(await api<any>("/stores/?all=true")));
+  }
+  useEffect(() => {
+    load().catch(() => nav("/stores"));
+  }, []);
+  function begin(store?: Store) {
+    setEditing(
+      store
+        ? { ...store }
+        : {
+            name: "",
+            store_code: "",
+            address: "",
+            description: "",
+            active: true,
+          },
+    );
+    setError("");
+    setStatus("");
+  }
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    setStatus("Saving…");
+    setError("");
+    try {
+      const body = {
+        name: editing.name,
+        store_code: editing.store_code,
+        address: editing.address || "",
+        description: editing.description || "",
+        active: editing.active !== false,
+      };
+      if (editing.id)
+        await api(`/stores/${editing.id}/`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+      else await api("/stores/", { method: "POST", body: JSON.stringify(body) });
+      setEditing(undefined);
+      setStatus("Saved");
+      await load();
+    } catch (e: any) {
+      setStatus("");
+      setError(e.data?.store_code?.[0] || e.data?.name?.[0] || e.data?.detail || "Could not save this store.");
+    }
+  }
+  return (
+    <main className="page store-admin">
+      <div className="screen-actions">
+        <button className="back" onClick={() => nav("/stores")}>
+          <ArrowLeft /> Stores
+        </button>
+        <button onClick={() => begin()}>+ Add store</button>
+      </div>
+      <div className="detail-title">
+        <p className="eyebrow">ADMIN</p>
+        <h1>Manage stores</h1>
+        <span className="save-state">{status}</span>
+      </div>
+      {editing && (
+        <form className="product-edit" onSubmit={save}>
+          <h2>{editing.id ? "Edit store" : "Add store"}</h2>
+          <label>
+            Store name
+            <input required value={editing.name || ""} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+          </label>
+          <label>
+            Store code
+            <input
+              required
+              value={editing.store_code || ""}
+              onChange={(e) =>
+                setEditing({
+                  ...editing,
+                  store_code: e.target.value.toUpperCase(),
+                })
+              }
+            />
+          </label>
+          <label>
+            Address
+            <textarea value={editing.address || ""} onChange={(e) => setEditing({ ...editing, address: e.target.value })} />
+          </label>
+          <label>
+            Description
+            <textarea value={editing.description || ""} onChange={(e) => setEditing({ ...editing, description: e.target.value })} />
+          </label>
+          <label className="check-label">
+            <input type="checkbox" checked={editing.active !== false} onChange={(e) => setEditing({ ...editing, active: e.target.checked })} /> Active store
+          </label>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="form-actions">
+            <button type="button" onClick={() => setEditing(undefined)}>
+              Cancel
+            </button>
+            <button className="primary">Save store</button>
+          </div>
+        </form>
+      )}
+      <div className="admin-products">
+        {stores.map((s) => (
+          <button key={s.id} onClick={() => begin(s)}>
+            <span className="store-icon">
+              <StoreIcon />
+            </span>
+            <span>
+              <strong>{s.name}</strong>
+              <small>
+                {s.store_code} · {s.address || "No address"} · {s.fridge_count} fridges
+              </small>
+              {!s.active && <em>Inactive</em>}
+            </span>
+            <ChevronRight />
+          </button>
+        ))}
+      </div>
+    </main>
+  );
+}
+function Shell({ children, title }: { children: React.ReactNode; title?: string }) {
+  const nav = useNavigate(),
+    loc = useLocation(),
+    store = selected() ? JSON.parse(selected()!) : null;
+  return (
+    <>
+      <header>
+        <div>
+          <small>{title || "CURRENT STORE"}</small>
+          <strong>{store?.name || "Fridge Refill"}</strong>
+        </div>
+        <div className="header-actions">
+          {store && loc.pathname === "/fridges" && <button onClick={() => nav("/fridges/new")}>+ Fridge</button>}
+          {title === "PRODUCTS" && <button onClick={() => nav("/admin/products/new")}>+ Product</button>}
+          {store && (
+            <button
+              onClick={() => {
+                sessionStorage.removeItem("store");
+                sessionStorage.removeItem("session");
+                nav("/stores");
+              }}
+            >
+              Change store
+            </button>
+          )}
+        </div>
+      </header>
+      <div className="shell">{children}</div>
+      <nav className="bottom-nav">
+        {[
+          ["/fridges", Home, "Fridges"],
+          ["/pick-list", PackageCheck, "Pick List"],
+          ["/refill", RefreshCw, "Refill"],
+          ["/history", History, "History"],
+        ].map(([path, Icon, label]: any) => (
+          <button className={loc.pathname.startsWith(path) ? "active" : ""} onClick={() => nav(path)} key={path}>
+            <Icon />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
+    </>
+  );
+}
+function Fridges() {
+  const [items, setItems] = useState<Fridge[]>([]),
+    [checks, setChecks] = useState<any[]>([]),
+    nav = useNavigate(),
+    store = JSON.parse(selected() || "null");
+  useEffect(() => {
+    if (!store) return;
+    Promise.all([api<Fridge[]>(`/stores/${store.id}/fridges/`), api<any>(`/fridge-checks/?refill_session=${sessionId()}`)]).then(([f, c]) => {
+      setItems(f);
+      setChecks(getResults(c));
+    });
+  }, []);
+  if (!store) return <Navigate to="/stores" />;
+  const done = checks.filter((c) => c.completed).length;
+  return (
+    <Shell>
+      <section className="hero">
+        <div>
+          <p className="eyebrow">TODAY’S ROUND</p>
+          <h1>
+            {done} of {items.length} checked
+          </h1>
+        </div>
+        <span className="progress-num">{items.length ? Math.round((done / items.length) * 100) : 0}%</span>
+        <div className="progress">
+          <i
+            style={{
+              width: `${items.length ? (done / items.length) * 100 : 0}%`,
+            }}
+          />
+        </div>
+      </section>
+      <div className="stack fridge-grid">
+        {items.map((f, i) => {
+          const check = checks.find((c) => c.fridge === f.id);
+          return (
+            <button className="fridge-card" key={f.id} onClick={() => nav(`/fridges/${f.id}`)}>
+              <div className="fridge-photo">
+                {f.photo ? <img src={f.photo} alt="" /> : <span>FRIDGE {f.fridge_number}</span>}
+                <em className={check?.completed ? "done" : ""}>
+                  {check?.completed ? (
+                    <>
+                      <Check /> Checked
+                    </>
+                  ) : check ? (
+                    "In progress"
+                  ) : (
+                    "Not checked"
+                  )}
+                </em>
+              </div>
+              <div className="card-body">
+                <small>FRIDGE {f.fridge_number}</small>
+                <strong>{f.name}</strong>
+                <span>
+                  {f.product_count} products · {f.location_description}
+                </span>
+              </div>
+              <ChevronRight />
+            </button>
+          );
+        })}
+      </div>
+      <button
+        className="primary sticky-action"
+        onClick={async () => {
+          await api(`/refill-sessions/${sessionId()}/generate_pick_list/`, {
+            method: "POST",
+          });
+          nav("/pick-list");
+        }}
+      >
+        Generate pick list <ChevronRight />
+      </button>
+    </Shell>
+  );
+}
+function CheckFridge() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [fridge, setF] = useState<Fridge>();
+  const [reqs, setReqs] = useState<Record<number, Req>>({});
+  const [drafts, setDrafts] = useState<Record<number, number>>({});
+  const [status, setStatus] = useState("Saved");
+  const reqsRef = useRef<Record<number, Req>>({});
+  const desiredRef = useRef<Record<number, number>>({});
+  const timersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const savingRef = useRef(new Set<number>());
+  useEffect(() => {
+    Promise.all([api<Fridge>(`/fridges/${id}/`), api<any>(`/requirements/?refill_session=${sessionId()}&fridge=${id}`)]).then(([f, r]) => {
+      setF(f);
+      const loaded = Object.fromEntries(getResults<Req>(r).map((x) => [x.product, x]));
+      reqsRef.current = loaded;
+      setReqs(loaded);
+    });
+    return () => Object.values(timersRef.current).forEach(clearTimeout);
+  }, [id]);
+  function storeRequirement(product: number, requirement: Req) {
+    reqsRef.current = { ...reqsRef.current, [product]: requirement };
+    setReqs(reqsRef.current);
+  }
+  async function flushQty(a: Assignment) {
+    const product = a.product;
+    if (savingRef.current.has(product)) return;
+    const n = desiredRef.current[product];
+    if (n === undefined) return;
+    delete desiredRef.current[product];
+    savingRef.current.add(product);
+    const current = reqsRef.current[product];
+    let failed = false;
+    try {
+      let saved: Req;
+      if (!current) {
+        saved = await api<Req>("/requirements/", {
+          method: "POST",
+          body: JSON.stringify({
+            refill_session: Number(sessionId()),
+            fridge: Number(id),
+            product,
+            required_quantity: n,
+            picked_quantity: 0,
+            refilled_quantity: 0,
+            version: 1,
+          }),
+        });
+      } else {
+        saved = await api<Req>(`/requirements/${current.id}/`, {
+          method: "PATCH",
+          body: JSON.stringify({ required_quantity: n, version: current.version }),
+        });
+      }
+      storeRequirement(product, saved);
+    } catch (e: any) {
+      if (!navigator.onLine && current) {
+        queueChange({
+          path: `/requirements/${current.id}/`,
+          body: { required_quantity: n, version: current.version },
+        });
+        setStatus("Offline - will sync");
+      } else if (e.status === 409) {
+        storeRequirement(product, e.data.current);
+        desiredRef.current[product] = n;
+      } else {
+        failed = true;
+        setStatus("Could not save");
+      }
+    } finally {
+      savingRef.current.delete(product);
+      if (desiredRef.current[product] !== undefined) void flushQty(a);
+      else if (!failed && !savingRef.current.size && navigator.onLine) setStatus("Saved");
+    }
+  }
+  function setQty(a: Assignment, value: number) {
+    const n = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+    setDrafts((current) => ({ ...current, [a.product]: n }));
+    desiredRef.current[a.product] = n;
+    setStatus(navigator.onLine ? "Saving…" : "Offline - will sync");
+    clearTimeout(timersRef.current[a.product]);
+    timersRef.current[a.product] = setTimeout(() => void flushQty(a), 250);
+  }
+  async function finish() {
+    const checks = getResults<any>(await api<any>(`/fridge-checks/?refill_session=${sessionId()}&fridge=${id}`));
+    if (checks[0])
+      await api(`/fridge-checks/${checks[0].id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ completed: true }),
+      });
+    else
+      await api("/fridge-checks/", {
+        method: "POST",
+        body: JSON.stringify({
+          refill_session: Number(sessionId()),
+          fridge: Number(id),
+          completed: true,
+        }),
+      });
+    nav("/fridges");
+  }
+  if (!fridge)
+    return (
+      <Shell>
+        <Loader />
+      </Shell>
+    );
+  const shelves = Object.entries(
+    fridge.assignments.reduce(
+      (all, a) => {
+        (all[a.shelf_number] ??= []).push(a);
+        return all;
+      },
+      {} as Record<number, Assignment[]>,
+    ),
+  ).sort(([a], [b]) => Number(a) - Number(b));
+  return (
+    <Shell title="CHECK FRIDGE">
+      <div className="screen-actions">
+        <button className="back" onClick={() => nav("/fridges")}>
+          <ArrowLeft /> Fridges
+        </button>
+        <button onClick={() => nav(`/stores/${fridge.store}/fridges/${fridge.id}/layout`)}>Edit layout</button>
+      </div>
+      <div className="detail-title">
+        <p className="eyebrow">FRIDGE {fridge.fridge_number}</p>
+        <h1>{fridge.name}</h1>
+        <span className={status === "Saved" ? "save-state" : "save-state pending"}>
+          {status.startsWith("Offline") && <WifiOff />}
+          {status}
+        </span>
+      </div>
+      {fridge.photo && <img className="detail-photo" src={fridge.photo} alt={`${fridge.name} fridge`} />}
+      <nav className="shelf-nav" aria-label="Jump to shelf">
+        {shelves.map(([s]) => (
+          <button key={s} onClick={() => document.getElementById(`shelf-${s}`)?.scrollIntoView({ behavior: "smooth" })}>
+            {s}
+          </button>
+        ))}
+      </nav>
+      <div className="products shelf-groups">
+        {shelves.map(([s, rows]) => (
+          <section className="shelf-group" id={`shelf-${s}`} key={s}>
+            <h2>Shelf {s}</h2>
+            {rows
+              .sort((a, b) => a.position - b.position)
+              .map((a) => {
+                const q = drafts[a.product] ?? reqs[a.product]?.required_quantity ?? 0;
+                const detail = [a.product_detail.variant, a.product_detail.size || a.product_detail.short_name].filter(Boolean).join(" · ");
+                return (
+                  <article className="quantity-row" key={a.id}>
+                    {a.product_detail.product_photo ? <img src={a.product_detail.product_photo} alt="" /> : <div className="product-placeholder">{a.product_detail.name[0]}</div>}
+                    <div className="product-name">
+                      <strong>{a.product_detail.name}</strong>
+                      {detail && <small>{detail}</small>}
+                      {a.product_detail.needs_verification && <small className="verify-badge">Needs verification</small>}
+                    </div>
+                    <div className="stepper">
+                      <button aria-label={`Decrease ${a.product_detail.name}`} onClick={() => setQty(a, q - 1)}>
+                        −
+                      </button>
+                      <input aria-label={`${a.product_detail.name} quantity`} inputMode="numeric" type="number" min="0" value={q} onChange={(e) => setQty(a, Number(e.target.value))} />
+                      <button aria-label={`Increase ${a.product_detail.name}`} onClick={() => setQty(a, q + 1)}>
+                        +
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+          </section>
+        ))}
+      </div>
+      <button className="primary sticky-action" onClick={finish}>
+        Finish fridge <Check />
+      </button>
+    </Shell>
+  );
+}
+function PickList() {
+  const [rows, setRows] = useState<Pick[]>([]),
+    [search, setSearch] = useState(""),
+    nav = useNavigate();
+  async function load() {
+    setRows(await api<Pick[]>(`/refill-sessions/${sessionId()}/pick-list/`));
+  }
+  useEffect(() => {
+    load();
+  }, []);
+  const shown = rows.filter((x) => `${x.product__name} ${x.product__barcode} ${x.product__sku}`.toLowerCase().includes(search.toLowerCase())),
+    done = rows.filter((x) => x.total_picked >= x.total_required).length;
+  async function toggle(row: Pick) {
+    const value = row.total_picked >= row.total_required ? 0 : row.total_required;
+    for (const b of row.breakdown) {
+      const all = getResults<Req>(await api<any>(`/requirements/?refill_session=${sessionId()}&fridge=${b.fridge}&product=${row.product}`));
+      if (all[0])
+        await api(`/requirements/${all[0].id}/`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            picked_quantity: value ? b.required_quantity : 0,
+            version: all[0].version,
+          }),
+        });
+    }
+    await load();
+  }
+  return (
+    <Shell>
+      <section className="hero">
+        <p className="eyebrow">BACK STORE</p>
+        <h1>Pick list</h1>
+        <p>
+          {done} / {rows.length} products collected
+        </p>
+        <div className="progress">
+          <i
+            style={{
+              width: `${rows.length ? (done / rows.length) * 100 : 0}%`,
+            }}
+          />
+        </div>
+      </section>
+      <label className="search">
+        <Search />
+        <input placeholder="Search product, barcode or SKU" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </label>
+      <div className="pick-list">
+        {shown.map((row) => {
+          const complete = row.total_picked >= row.total_required;
+          return (
+            <article className={complete ? "pick-row complete" : "pick-row"} key={row.product}>
+              <button className="check" aria-label={`Mark ${row.product__name} ${complete ? "not collected" : "collected"}`} onClick={() => toggle(row)}>
+                {complete && <Check />}
+              </button>
+              <div>
+                <strong>{row.product__name}</strong>
+                {row.breakdown.map((x) => (
+                  <small key={x.fridge}>
+                    {x.fridge__name} × {x.required_quantity}
+                  </small>
+                ))}
+                <button
+                  className="shortage"
+                  onClick={async () => {
+                    const found = Number(prompt(`Required: ${row.total_required}. How many found?`, String(row.total_required)));
+                    if (Number.isFinite(found) && found < row.total_required)
+                      await api("/shortages/", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          refill_session: Number(sessionId()),
+                          product: row.product,
+                          required_quantity: row.total_required,
+                          found_quantity: found,
+                        }),
+                      });
+                  }}
+                >
+                  Not enough stock
+                </button>
+              </div>
+              <b>{row.total_required}</b>
+            </article>
+          );
+        })}
+        {!shown.length && <Empty text="No matching products" />}
+      </div>
+      <button
+        className="primary sticky-action"
+        onClick={async () => {
+          await api(`/refill-sessions/${sessionId()}/start_refilling/`, {
+            method: "POST",
+          });
+          nav("/refill");
+        }}
+      >
+        Start refilling <ChevronRight />
+      </button>
+    </Shell>
+  );
+}
+function Refill() {
+  const [reqs, setReqs] = useState<Req[]>([]),
+    [checks, setChecks] = useState<any[]>([]),
+    nav = useNavigate();
+  useEffect(() => {
+    Promise.all([api<any>(`/requirements/?refill_session=${sessionId()}`), api<any>(`/fridge-checks/?refill_session=${sessionId()}`)]).then(([r, c]) => {
+      setReqs(getResults(r));
+      setChecks(getResults(c));
+    });
+  }, []);
+  const groups = useMemo(
+    () =>
+      Object.values(
+        reqs
+          .filter((x) => x.required_quantity > 0)
+          .reduce(
+            (a, x) => {
+              (a[x.fridge] ??= {
+                fridge: x.fridge,
+                name: x.fridge_name || `Fridge ${x.fridge}`,
+                rows: [],
+              }).rows.push(x);
+              return a;
+            },
+            {} as Record<number, { fridge: number; name: string; rows: Req[] }>,
+          ),
+      ),
+    [reqs],
+  );
+  async function mark(g: any) {
+    let c: any = checks.find((x) => x.fridge === g.fridge);
+    if (c)
+      await api(`/fridge-checks/${c.id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ refilled: true }),
+      });
+    else
+      c = await api<any>("/fridge-checks/", {
+        method: "POST",
+        body: JSON.stringify({
+          refill_session: Number(sessionId()),
+          fridge: g.fridge,
+          completed: true,
+          refilled: true,
+        }),
+      });
+    setChecks((x) => x.map((y) => (y.id === c.id ? c : y)).concat(x.some((y) => y.id === c.id) ? [] : [c]));
+  }
+  const done = checks.filter((x) => x.refilled).length;
+  return (
+    <Shell>
+      <section className="hero">
+        <p className="eyebrow">FINAL STEP</p>
+        <h1>Refilling</h1>
+        <p>
+          {done} / {groups.length} fridges complete
+        </p>
+      </section>
+      <div className="stack">
+        {groups.map((g) => {
+          const complete = checks.find((x) => x.fridge === g.fridge)?.refilled,
+            shelves = Object.entries(
+              g.rows.reduce(
+                (a, x) => {
+                  (a[x.shelf_number || 1] ??= []).push(x);
+                  return a;
+                },
+                {} as Record<number, Req[]>,
+              ),
+            ).sort(([a], [b]) => Number(a) - Number(b));
+          return (
+            <article className="refill-card" key={g.fridge}>
+              <h2>
+                {g.name}
+                {complete && (
+                  <span>
+                    <Check /> Done
+                  </span>
+                )}
+              </h2>
+              {shelves.map(([s, rows]) => (
+                <section className="refill-shelf" key={s}>
+                  <h3>Shelf {s}</h3>
+                  {rows
+                    .sort((a, b) => (a.position || 0) - (b.position || 0))
+                    .map((x) => (
+                      <div key={x.id}>
+                        <span>{x.product_detail.name}</span>
+                        <b>{x.picked_quantity || x.required_quantity}</b>
+                      </div>
+                    ))}
+                </section>
+              ))}
+              <button disabled={complete} onClick={() => mark(g)}>
+                {complete ? "Fridge refilled" : "Mark fridge refilled"}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      <button
+        disabled={done < groups.length}
+        className="primary sticky-action"
+        onClick={async () => {
+          await api(`/refill-sessions/${sessionId()}/complete/`, {
+            method: "POST",
+          });
+          nav("/history");
+        }}
+      >
+        Complete refill session <Check />
+      </button>
+    </Shell>
+  );
+}
+function HistoryPage() {
+  const [items, setItems] = useState<Session[]>([]);
+  useEffect(() => {
+    api<any>("/history/").then((x) => setItems(getResults(x)));
+  }, []);
+  return (
+    <Shell>
+      <section className="hero">
+        <p className="eyebrow">YOUR ACTIVITY</p>
+        <h1>History</h1>
+      </section>
+      <div className="stack">
+        {items.map((s) => (
+          <article className="history-card" key={s.id}>
+            <div>
+              <strong>{s.status.replace("_", " ")}</strong>
+              <small>{new Date(s.started_at).toLocaleString()}</small>
+            </div>
+            <div>
+              <b>{s.checked_count}</b>
+              <small>fridges</small>
+            </div>
+            <div>
+              <b>{s.total_units || 0}</b>
+              <small>units</small>
+            </div>
+          </article>
+        ))}
+      </div>
+    </Shell>
+  );
+}
+function AddFridge() {
+  const nav = useNavigate(),
+    store: Store | null = selected() ? JSON.parse(selected()!) : null,
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  async function save(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!store) return;
+    setBusy(true);
+    setError("");
+    try {
+      const data = new FormData(e.currentTarget);
+      data.set("store", String(store.id));
+      data.set("active", "true");
+      data.set("display_order", String(Number(data.get("display_order")) || 0));
+      const photo = data.get("photo");
+      if (photo instanceof File && !photo.size) data.delete("photo");
+      await api("/fridges/", { method: "POST", body: data });
+      nav("/fridges");
+    } catch (e: any) {
+      setError(e.data ? JSON.stringify(e.data) : "Could not create fridge.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (!store) return <Navigate to="/stores" />;
+  return (
+    <Shell title="ADD FRIDGE">
+      <button className="back" onClick={() => nav("/fridges")}>
+        <ArrowLeft /> Fridges
+      </button>
+      <form className="product-edit" onSubmit={save}>
+        <p className="eyebrow">{store.name}</p>
+        <h1>Add fridge</h1>
+        <label>
+          Fridge name
+          <input name="name" required placeholder="Coffee / Protein / Dairy" />
+        </label>
+        <label>
+          Fridge number
+          <input name="fridge_number" required placeholder="7" />
+        </label>
+        <label>
+          Location
+          <input name="location_description" placeholder="Rear wall, beside checkout" />
+        </label>
+        <label>
+          Display order
+          <input name="display_order" type="number" min="0" defaultValue="0" />
+        </label>
+        <label>
+          Fridge photo
+          <input name="photo" type="file" accept="image/*" capture="environment" />
+        </label>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="primary" disabled={busy}>
+          {busy ? "Creating…" : "Create fridge"}
+        </button>
+      </form>
+    </Shell>
+  );
+}
+function AddProduct() {
+  const nav = useNavigate(),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  async function save(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const data = new FormData(e.currentTarget);
+      data.set("active", "true");
+      data.set("needs_verification", String(data.get("needs_verification") === "on"));
+      const photo = data.get("product_photo");
+      if (photo instanceof File && !photo.size) data.delete("product_photo");
+      await api("/products/", { method: "POST", body: data });
+      nav("/admin/products");
+    } catch (e: any) {
+      setError(e.data?.barcode?.[0] || e.data?.sku?.[0] || e.data?.name?.[0] || "Could not create product. Check the details and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Shell title="ADD PRODUCT">
+      <button className="back" onClick={() => nav("/admin/products")}>
+        <ArrowLeft /> Products
+      </button>
+      <form className="product-edit" onSubmit={save}>
+        <h1>Add product</h1>
+        {[
+          ["name", "Product name"],
+          ["short_name", "Short name / flavour"],
+          ["brand", "Brand"],
+          ["variant", "Variant / flavour"],
+          ["size", "Size"],
+          ["package_type", "Package type"],
+          ["barcode", "Barcode"],
+          ["sku", "SKU"],
+          ["category", "Category"],
+          ["pack_size", "Pack size"],
+        ].map(([key, label]) => (
+          <label key={key}>
+            {label}
+            <input name={key} required={key === "name"} />
+          </label>
+        ))}
+        <label className="check-label">
+          <input name="needs_verification" type="checkbox" /> Needs verification
+        </label>
+        <label>
+          Product photo
+          <input name="product_photo" type="file" accept="image/*" capture="environment" />
+        </label>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="primary" disabled={busy}>
+          {busy ? "Creating…" : "Create product"}
+        </button>
+      </form>
+    </Shell>
+  );
+}
+function LayoutEditor() {
+  const { fridgeId } = useParams(),
+    nav = useNavigate(),
+    [fridge, setFridge] = useState<Fridge>(),
+    [rows, setRows] = useState<Assignment[]>([]),
+    [products, setProducts] = useState<Product[]>([]),
+    [selectedProducts, setSelected] = useState<number[]>([]),
+    [shelf, setShelf] = useState(1),
+    [status, setStatus] = useState("");
+  async function load() {
+    const [f, p] = await Promise.all([api<Fridge>(`/fridges/${fridgeId}/`), api<any>("/products/")]);
+    setFridge(f);
+    setRows([...f.assignments].sort((a, b) => a.shelf_number - b.shelf_number || a.position - b.position));
+    setProducts(getResults(p));
+  }
+  useEffect(() => {
+    load();
+  }, [fridgeId]);
+  function normalize(next: Assignment[]) {
+    const sorted = [...next].sort((a, b) => a.shelf_number - b.shelf_number || a.position - b.position);
+    let current = 0,
+      pos = 0;
+    return sorted.map((x, i) => {
+      if (x.shelf_number !== current) {
+        current = x.shelf_number;
+        pos = 0;
+      }
+      return { ...x, position: ++pos, display_order: i };
+    });
+  }
+  function move(id: number, direction: -1 | 1) {
+    const ordered = normalize(rows),
+      index = ordered.findIndex((x) => x.id === id),
+      target = index + direction;
+    if (target < 0 || target >= ordered.length) return;
+    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+    if (ordered[index].shelf_number !== ordered[target].shelf_number) ordered[index].shelf_number = ordered[target].shelf_number;
+    setRows(normalize(ordered));
+  }
+  function moveShelf(id: number, direction: -1 | 1) {
+    setRows(normalize(rows.map((x) => (x.id === id ? { ...x, shelf_number: Math.max(1, x.shelf_number + direction) } : x))));
+  }
+  async function save() {
+    setStatus("Saving…");
+    await api("/fridge-products/save-layout/", {
+      method: "POST",
+      body: JSON.stringify({
+        assignments: normalize(rows).map((x) => ({
+          id: x.id,
+          shelf_number: x.shelf_number,
+          position: x.position,
+        })),
+      }),
+    });
+    setStatus("Saved");
+    await load();
+  }
+  async function add() {
+    if (!selectedProducts.length) return;
+    await api("/fridge-products/bulk-add/", {
+      method: "POST",
+      body: JSON.stringify({
+        fridge: Number(fridgeId),
+        shelf_number: shelf,
+        products: selectedProducts,
+      }),
+    });
+    setSelected([]);
+    await load();
+  }
+  if (!fridge)
+    return (
+      <Shell>
+        <Loader />
+      </Shell>
+    );
+  const groups = Object.entries(
+    rows.reduce(
+      (a, x) => {
+        (a[x.shelf_number] ??= []).push(x);
+        return a;
+      },
+      {} as Record<number, Assignment[]>,
+    ),
+  );
+  return (
+    <Shell title="LAYOUT EDITOR">
+      <div className="screen-actions">
+        <button className="back" onClick={() => nav("/fridges")}>
+          <ArrowLeft /> Fridges
+        </button>
+        <button onClick={() => nav("/admin/products")}>Edit products</button>
+      </div>
+      <div className="detail-title">
+        <p className="eyebrow">FRIDGE {fridge.fridge_number}</p>
+        <h1>Edit fridge layout</h1>
+        <span className="save-state">{status}</span>
+      </div>
+      <div className="layout-groups">
+        {groups.map(([number, items]) => (
+          <section className="layout-shelf" key={number}>
+            <h2>Shelf {number}</h2>
+            {items.map((x) => (
+              <article key={x.id}>
+                <span className="drag-handle" aria-hidden>
+                  ☰
+                </span>
+                <div>
+                  <strong>{x.product_detail.name}</strong>
+                  <small>Position {x.position}</small>
+                </div>
+                <div className="move-controls">
+                  <button onClick={() => move(x.id, -1)} aria-label="Move up">
+                    ↑
+                  </button>
+                  <button onClick={() => move(x.id, 1)} aria-label="Move down">
+                    ↓
+                  </button>
+                  <button onClick={() => moveShelf(x.id, -1)} aria-label="Move to shelf above">
+                    S−
+                  </button>
+                  <button onClick={() => moveShelf(x.id, 1)} aria-label="Move to shelf below">
+                    S+
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+        ))}
+      </div>
+      <section className="add-products">
+        <h2>Add existing products</h2>
+        <label>
+          Shelf
+          <input type="number" min="1" value={shelf} onChange={(e) => setShelf(Number(e.target.value))} />
+        </label>
+        <select multiple value={selectedProducts.map(String)} onChange={(e) => setSelected(Array.from(e.target.selectedOptions, (x) => Number(x.value)))}>
+          {products
+            .filter((p) => !rows.some((r) => r.product === p.id))
+            .map((p) => (
+              <option value={p.id} key={p.id}>
+                {p.name}
+              </option>
+            ))}
+        </select>
+        <button onClick={add}>+ Add selected products</button>
+      </section>
+      <button className="primary sticky-action" onClick={save}>
+        Save layout <Check />
+      </button>
+    </Shell>
+  );
+}
+function LayoutPdfImport({ fridgeId, onApplied }: { fridgeId: string; onApplied: () => Promise<void> }) {
+  const [file, setFile] = useState<File>(),
+    [preview, setPreview] = useState<ImportPreview>(),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  async function analyse() {
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      setPreview(await api<ImportPreview>(`/fridges/${fridgeId}/import-layout-preview/`, { method: "POST", body }));
+    } catch (e: any) {
+      setError(e.data?.file?.[0] || e.data?.detail || "Could not read this PDF.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function apply() {
+    if (!preview || !confirm(`Replace this fridge layout with ${preview.summary.products} imported products?`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/fridges/${fridgeId}/apply-layout-import/`, {
+        method: "POST",
+        body: JSON.stringify({ rows: preview.rows }),
+      });
+      setPreview(undefined);
+      setFile(undefined);
+      await onApplied();
+    } catch (e: any) {
+      setError(e.data?.rows?.[0] || e.data?.detail || "Could not apply this layout.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="layout-import">
+      <h2>Import supplier PDF</h2>
+      <p className="muted">Upload a structured planogram PDF. Review all matches before replacing this fridge layout.</p>
+      <div className="import-controls">
+        <input
+          type="file"
+          accept="application/pdf,.pdf"
+          onChange={(e) => {
+            setFile(e.target.files?.[0]);
+            setPreview(undefined);
+            setError("");
+          }}
+        />
+        <button disabled={!file || busy} onClick={analyse}>
+          {busy ? "Analysing…" : "Analyse PDF"}
+        </button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {preview && (
+        <>
+          <div className="import-summary">
+            <strong>
+              {preview.summary.products} products · {preview.summary.shelves} shelves
+            </strong>
+            <span>
+              {preview.summary.matched} matched · {preview.summary.new} new
+            </span>
+          </div>
+          <div className="import-review">
+            {preview.rows.map((row) => (
+              <article key={`${row.shelf_number}-${row.position}`}>
+                <span>
+                  Shelf {row.shelf_number} · {row.position}
+                </span>
+                <strong>{row.name}</strong>
+                <small>
+                  {row.pack_size} · {row.barcode || row.londis_code}
+                </small>
+                <em className={row.match}>{row.match === "existing" ? "Matched" : "New · verify"}</em>
+              </article>
+            ))}
+          </div>
+          <p className="warning">Applying this import replaces the current fridge layout. New products will be marked “Needs verification”.</p>
+          <button className="primary" disabled={busy} onClick={apply}>
+            {busy ? "Applying…" : "Apply reviewed layout"}
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+function ShelfLayoutEditor() {
+  const { fridgeId } = useParams(),
+    nav = useNavigate();
+  const [fridge, setFridge] = useState<Fridge>(),
+    [rows, setRows] = useState<Assignment[]>([]),
+    [products, setProducts] = useState<Product[]>([]),
+    [selectedByShelf, setSelected] = useState<Record<number, number[]>>({}),
+    [extraShelves, setExtraShelves] = useState<number[]>([]),
+    [status, setStatus] = useState("");
+  async function load() {
+    const [f, p] = await Promise.all([api<Fridge>(`/fridges/${fridgeId}/`), api<any>("/products/")]);
+    setFridge(f);
+    setRows([...f.assignments].sort((a, b) => a.shelf_number - b.shelf_number || a.position - b.position));
+    setProducts(getResults(p));
+  }
+  useEffect(() => {
+    load();
+  }, [fridgeId]);
+  function normalize(next: Assignment[]) {
+    const sorted = [...next].sort((a, b) => a.shelf_number - b.shelf_number || a.position - b.position);
+    let current = 0,
+      pos = 0;
+    return sorted.map((x, i) => {
+      if (x.shelf_number !== current) {
+        current = x.shelf_number;
+        pos = 0;
+      }
+      return { ...x, position: ++pos, display_order: i };
+    });
+  }
+  function move(id: number, direction: -1 | 1) {
+    const ordered = normalize(rows),
+      index = ordered.findIndex((x) => x.id === id),
+      target = index + direction;
+    if (target < 0 || target >= ordered.length) return;
+    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+    if (ordered[index].shelf_number !== ordered[target].shelf_number) ordered[index].shelf_number = ordered[target].shelf_number;
+    setRows(normalize(ordered));
+  }
+  function moveShelf(id: number, direction: -1 | 1) {
+    setRows(normalize(rows.map((x) => (x.id === id ? { ...x, shelf_number: Math.max(1, x.shelf_number + direction) } : x))));
+  }
+  async function addToShelf(shelf: number) {
+    const chosen = selectedByShelf[shelf] || [];
+    if (!chosen.length) return;
+    setStatus(`Adding to Shelf ${shelf}…`);
+    await api("/fridge-products/bulk-add/", {
+      method: "POST",
+      body: JSON.stringify({
+        fridge: Number(fridgeId),
+        shelf_number: shelf,
+        products: chosen,
+      }),
+    });
+    setSelected((x) => ({ ...x, [shelf]: [] }));
+    setStatus("Added");
+    await load();
+  }
+  async function save() {
+    setStatus("Saving…");
+    await api("/fridge-products/save-layout/", {
+      method: "POST",
+      body: JSON.stringify({
+        assignments: normalize(rows).map((x) => ({
+          id: x.id,
+          shelf_number: x.shelf_number,
+          position: x.position,
+        })),
+      }),
+    });
+    setStatus("Saved");
+    await load();
+  }
+  if (!fridge)
+    return (
+      <Shell>
+        <Loader />
+      </Shell>
+    );
+  const existing = Array.from(new Set(rows.map((x) => x.shelf_number))),
+    max = Math.max(0, ...existing, ...extraShelves),
+    shelves = Array.from(new Set([...existing, ...extraShelves])).sort((a, b) => a - b),
+    available = products.filter((p) => !rows.some((r) => r.product === p.id));
+  return (
+    <Shell title="LAYOUT EDITOR">
+      <div className="screen-actions">
+        <button className="back" onClick={() => nav("/fridges")}>
+          <ArrowLeft /> Fridges
+        </button>
+        <button onClick={() => nav("/admin/products")}>Edit products</button>
+      </div>
+      <div className="detail-title">
+        <p className="eyebrow">FRIDGE {fridge.fridge_number}</p>
+        <h1>Edit fridge layout</h1>
+        <span className="save-state">{status}</span>
+      </div>
+      <LayoutPdfImport fridgeId={fridgeId!} onApplied={load} />
+      <div className="layout-groups">
+        {shelves.map((number) => {
+          const items = rows.filter((x) => x.shelf_number === number).sort((a, b) => a.position - b.position),
+            chosen = selectedByShelf[number] || [];
+          return (
+            <section className="layout-shelf" key={number}>
+              <h2>Shelf {number}</h2>
+              {items.map((x) => (
+                <article key={x.id}>
+                  <span className="drag-handle" aria-hidden>
+                    ☰
+                  </span>
+                  <div>
+                    <strong>{x.product_detail.name}</strong>
+                    <small>Position {x.position}</small>
+                  </div>
+                  <div className="move-controls">
+                    <button onClick={() => move(x.id, -1)} aria-label="Move up">
+                      ↑
+                    </button>
+                    <button onClick={() => move(x.id, 1)} aria-label="Move down">
+                      ↓
+                    </button>
+                    <button onClick={() => moveShelf(x.id, -1)} aria-label="Move to shelf above">
+                      S−
+                    </button>
+                    <button onClick={() => moveShelf(x.id, 1)} aria-label="Move to shelf below">
+                      S+
+                    </button>
+                  </div>
+                </article>
+              ))}
+              <div className="shelf-add">
+                <label>
+                  Add products to Shelf {number}
+                  <select
+                    multiple
+                    value={chosen.map(String)}
+                    onChange={(e) =>
+                      setSelected((x) => ({
+                        ...x,
+                        [number]: Array.from(e.target.selectedOptions, (o) => Number(o.value)),
+                      }))
+                    }
+                  >
+                    {available.map((p) => (
+                      <option value={p.id} key={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button disabled={!chosen.length} onClick={() => addToShelf(number)}>
+                  + Add {chosen.length ? `${chosen.length} product${chosen.length === 1 ? "" : "s"}` : "product"} to Shelf {number}
+                </button>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      <button className="add-shelf-button" onClick={() => setExtraShelves((x) => [...x, max + 1])}>
+        + Add Shelf
+      </button>
+      <button className="primary sticky-action" onClick={save}>
+        Save layout <Check />
+      </button>
+    </Shell>
+  );
+}
+function ProductAdmin() {
+  const [products, setProducts] = useState<Product[]>([]),
+    [filter, setFilter] = useState("all"),
+    [editing, setEditing] = useState<Product>(),
+    [status, setStatus] = useState("");
+  async function load() {
+    const suffix = filter === "all" ? "" : `?verification=${filter}`;
+    setProducts(getResults(await api<any>(`/products/${suffix}`)));
+  }
+  useEffect(() => {
+    load();
+  }, [filter]);
+  async function save(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editing) return;
+    setStatus("Saving…");
+    const data = new FormData(e.currentTarget);
+    data.set("needs_verification", String(data.get("needs_verification") === "on"));
+    const updated = await api<Product>(`/products/${editing.id}/`, {
+      method: "PATCH",
+      body: data,
+    });
+    setEditing(updated);
+    setStatus("Saved");
+    await load();
+  }
+  async function scan(file?: File) {
+    if (!file || !(window as any).BarcodeDetector) return alert("Camera barcode detection is not supported here. Enter the barcode manually.");
+    try {
+      const detector = new (window as any).BarcodeDetector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"],
+      });
+      const codes = await detector.detect(await createImageBitmap(file));
+      if (codes[0]) setEditing((x) => (x ? { ...x, barcode: codes[0].rawValue } : x));
+      else alert("No barcode found. Try again or enter it manually.");
+    } catch {
+      alert("Could not scan this image. Enter the barcode manually.");
+    }
+  }
+  return (
+    <Shell title="PRODUCTS">
+      <section className="hero">
+        <p className="eyebrow">ADMIN / MANAGER</p>
+        <h1>Products</h1>
+      </section>
+      <div className="filter-tabs">
+        {[
+          ["all", "All"],
+          ["verified", "Verified"],
+          ["needs", "Needs verification"],
+        ].map(([v, l]) => (
+          <button className={filter === v ? "active" : ""} onClick={() => setFilter(v)} key={v}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {editing ? (
+        <form className="product-edit" onSubmit={save}>
+          <button type="button" className="back" onClick={() => setEditing(undefined)}>
+            <ArrowLeft /> Products
+          </button>
+          <h2>Edit product</h2>
+          {[
+            ["name", "Product name"],
+            ["brand", "Brand"],
+            ["variant", "Variant / flavour"],
+            ["size", "Size"],
+            ["package_type", "Package type"],
+            ["barcode", "Barcode"],
+            ["sku", "SKU"],
+            ["category", "Category"],
+          ].map(([key, label]) => (
+            <label key={key}>
+              {label}
+              <input name={key} value={(editing as any)[key] || ""} onChange={(e) => setEditing({ ...editing, [key]: e.target.value })} />
+            </label>
+          ))}
+          <label className="check-label">
+            <input name="needs_verification" type="checkbox" checked={editing.needs_verification} onChange={(e) => setEditing({ ...editing, needs_verification: e.target.checked })} /> Needs verification
+          </label>
+          <label>
+            Product photo
+            <input name="product_photo" type="file" accept="image/*" capture="environment" />
+          </label>
+          <label>
+            Scan barcode with camera
+            <input type="file" accept="image/*" capture="environment" onChange={(e) => scan(e.target.files?.[0])} />
+          </label>
+          <button className="primary">Save</button>
+          <span className="save-state">{status}</span>
+        </form>
+      ) : (
+        <div className="admin-products">
+          {products.map((p) => (
+            <button key={p.id} onClick={() => setEditing(p)}>
+              {p.product_photo ? <img src={p.product_photo} alt="" /> : <span className="product-placeholder">{p.name[0]}</span>}
+              <span>
+                <strong>{p.name}</strong>
+                <small>{[p.variant, p.size, p.barcode].filter(Boolean).join(" · ") || "Details not completed"}</small>
+                {p.needs_verification && <em>Needs verification</em>}
+              </span>
+              <ChevronRight />
+            </button>
+          ))}
+        </div>
+      )}
+    </Shell>
+  );
+}
+function Empty({ text }: { text: string }) {
+  return (
+    <div className="empty">
+      <PackageCheck />
+      <p>{text}</p>
+    </div>
+  );
+}
+function Loader() {
+  return <div className="loader" aria-label="Loading" />;
+}
+function Guard({ children }: { children: React.ReactNode }) {
+  return token.get() ? children : <Navigate to="/login" />;
+}
+export default function App() {
+  useEffect(() => {
+    flushQueue();
+  }, []);
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/stores"
+        element={
+          <Guard>
+            <Stores />
+          </Guard>
+        }
+      />
+      <Route
+        path="/admin/stores"
+        element={
+          <Guard>
+            <StoreAdmin />
+          </Guard>
+        }
+      />
+      <Route
+        path="/fridges"
+        element={
+          <Guard>
+            <Fridges />
+          </Guard>
+        }
+      />
+      <Route
+        path="/fridges/new"
+        element={
+          <Guard>
+            <AddFridge />
+          </Guard>
+        }
+      />
+      <Route
+        path="/fridges/:id"
+        element={
+          <Guard>
+            <CheckFridge />
+          </Guard>
+        }
+      />
+      <Route
+        path="/stores/:storeId/fridges/:fridgeId/layout"
+        element={
+          <Guard>
+            <ShelfLayoutEditor />
+          </Guard>
+        }
+      />
+      <Route
+        path="/admin/products"
+        element={
+          <Guard>
+            <ProductAdmin />
+          </Guard>
+        }
+      />
+      <Route
+        path="/admin/products/new"
+        element={
+          <Guard>
+            <AddProduct />
+          </Guard>
+        }
+      />
+      <Route
+        path="/pick-list"
+        element={
+          <Guard>
+            <PickList />
+          </Guard>
+        }
+      />
+      <Route
+        path="/refill"
+        element={
+          <Guard>
+            <Refill />
+          </Guard>
+        }
+      />
+      <Route
+        path="/history"
+        element={
+          <Guard>
+            <HistoryPage />
+          </Guard>
+        }
+      />
+      <Route path="*" element={<Navigate to={token.get() ? "/stores" : "/login"} />} />
+    </Routes>
+  );
+}
