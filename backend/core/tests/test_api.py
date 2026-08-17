@@ -28,6 +28,15 @@ class FlowTests(APITestCase):
         self.assertNotIn('assignments',listed); self.assertEqual(listed['product_count'],1)
         detail=self.client.get(f'/api/fridges/{self.f1.id}/').json()
         self.assertEqual([row['product_detail']['name'] for row in detail['assignments']],['Active product'])
+    def test_multi_bay_import_creates_separate_fridges(self):
+        admin=User.objects.create_user('layout-admin','layout-admin@test.com','pass',role='ADMIN'); self.client.force_authenticate(admin)
+        rows=[
+            {'fixture_number':1,'shelf_number':1,'position':1,'name':'Drink A','barcode':'5010000000001','londis_code':'LA','m_code':'MA','pack_size':'500ml','facings':1},
+            {'fixture_number':2,'shelf_number':1,'position':1,'name':'Drink B','barcode':'5010000000002','londis_code':'LB','m_code':'MB','pack_size':'500ml','facings':2},
+        ]
+        response=self.client.post(f'/api/fridges/{self.f1.id}/apply-layout-import/',{'rows':rows,'separate_fridges':True},format='json')
+        self.assertEqual(response.status_code,200); self.assertEqual(len(response.json()['fridges']),2)
+        self.assertEqual(Fridge.objects.get(store=self.s,fridge_number='1-2').assignments.count(),1)
     def test_refill_requirements_are_in_physical_order(self):
         a=Product.objects.create(name='Product A',sku='RA'); b=Product.objects.create(name='Product B',sku='RB'); c=Product.objects.create(name='Product C',sku='RC')
         for product,shelf,position in [(b,2,1),(a,1,2),(c,1,1)]:

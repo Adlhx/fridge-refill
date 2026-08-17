@@ -59,25 +59,39 @@ class FridgeViewSet(viewsets.ModelViewSet):
             product=by_barcode.get(row['barcode']) or by_sku.get(row['londis_code'])
             row['product_id']=product.id if product else None; row['match']='existing' if product else 'new'
             matched+=bool(product)
-        return Response({'rows':rows,'summary':{'products':len(rows),'shelves':len({r['shelf_number'] for r in rows}),'matched':matched,'new':len(rows)-matched}})
+        fixtures=sorted({r['fixture_number'] for r in rows})
+        fixture_summary=[{'fixture_number':fixture,'products':sum(r['fixture_number']==fixture for r in rows),'shelves':len({r['shelf_number'] for r in rows if r['fixture_number']==fixture})} for fixture in fixtures]
+        return Response({'rows':rows,'fixtures':fixture_summary,'summary':{'products':len(rows),'fixtures':len(fixtures),'shelves':len({(r['fixture_number'],r['shelf_number']) for r in rows}),'matched':matched,'new':len(rows)-matched}})
     @action(detail=True,methods=['post'],url_path='apply-layout-import')
     def apply_layout_import(self,request,pk=None):
         fridge=self.get_object(); rows=request.data.get('rows') or []
         if not rows: raise ValidationError({'rows':'Preview a PDF before applying the layout.'})
-        seen=set()
+        separate=bool(request.data.get('separate_fridges',True)); fixtures=sorted({int(r.get('fixture_number',1)) for r in rows})
         with transaction.atomic():
-            fridge.assignments.select_for_update().update(active=False)
-            for index,row in enumerate(sorted(rows,key=lambda r:(int(r['shelf_number']),int(r['position'])))):
-                product=Product.objects.filter(pk=row.get('product_id')).first() if row.get('product_id') else None
-                if not product and row.get('barcode'): product=Product.objects.filter(barcode=row['barcode']).first()
-                if not product and row.get('londis_code'): product=Product.objects.filter(sku=row['londis_code']).first()
-                if not product:
-                    product=Product.objects.create(name=row['name'],barcode=row.get('barcode',''),sku=row.get('londis_code',''),size=row.get('pack_size',''),pack_size=row.get('pack_size',''),category='Alcohol',needs_verification=True)
-                if product.id in seen: raise ValidationError({'rows':f"{product.name} appears more than once; duplicate fridge assignments are not supported."})
-                seen.add(product.id)
-                notes=f"Planogram {row.get('m_code','')} · {row.get('facings',1)} facing(s)".strip()
-                FridgeProduct.objects.update_or_create(fridge=fridge,product=product,defaults={'shelf_number':max(1,int(row['shelf_number'])),'position':max(1,int(row['position'])),'display_order':index,'notes':notes,'active':True})
-        return Response({'detail':'Layout imported','products':len(seen),'shelves':len({int(r['shelf_number']) for r in rows})})
+            barcodes={r.get('barcode','') for r in rows if r.get('barcode')}; skus={r.get('londis_code','') for r in rows if r.get('londis_code')}
+            existing=Product.objects.filter(models.Q(barcode__in=barcodes)|models.Q(sku__in=skus)); by_barcode={p.barcode:p for p in existing if p.barcode}; by_sku={p.sku:p for p in existing if p.sku}
+            missing=[]; planned=set()
+            for row in rows:
+                key=('barcode',row.get('barcode')) if row.get('barcode') else ('sku',row.get('londis_code'))
+                if (by_barcode.get(row.get('barcode')) or by_sku.get(row.get('londis_code')) or key in planned): continue
+                planned.add(key); missing.append(Product(name=row['name'],barcode=row.get('barcode',''),sku=row.get('londis_code',''),size=row.get('pack_size',''),pack_size=row.get('pack_size',''),category='Alcohol',needs_verification=True))
+            Product.objects.bulk_create(missing,ignore_conflicts=True)
+            products=Product.objects.filter(models.Q(barcode__in=barcodes)|models.Q(sku__in=skus)); by_barcode={p.barcode:p for p in products if p.barcode}; by_sku={p.sku:p for p in products if p.sku}
+            targets={fixtures[0]:fridge}
+            if separate:
+                for fixture in fixtures[1:]:
+                    number=f'{fridge.fridge_number}-{fixture}'; targets[fixture],_=Fridge.objects.get_or_create(store=fridge.store,fridge_number=number,defaults={'name':f'{fridge.name} – Bay {fixture}','location_description':fridge.location_description,'display_order':fridge.display_order+fixture-1})
+            created=[]
+            for fixture,target in targets.items():
+                fixture_rows=[r for r in rows if int(r.get('fixture_number',1))==fixture]
+                target.assignments.all().delete(); assignments=[]; seen=set()
+                for index,row in enumerate(sorted(fixture_rows,key=lambda r:(int(r['shelf_number']),int(r['position'])))):
+                    product=by_barcode.get(row.get('barcode')) or by_sku.get(row.get('londis_code'))
+                    if not product or product.id in seen: continue
+                    seen.add(product.id); notes=f"Planogram {row.get('m_code','')} · {row.get('facings',1)} facing(s)".strip()
+                    assignments.append(FridgeProduct(fridge=target,product=product,shelf_number=max(1,int(row['shelf_number'])),position=max(1,int(row['position'])),display_order=index,notes=notes,active=True))
+                FridgeProduct.objects.bulk_create(assignments); created.append({'id':target.id,'name':target.name,'fridge_number':target.fridge_number,'fixture_number':fixture,'products':len(assignments)})
+        return Response({'detail':'Layout imported','fridges':created,'products':sum(x['products'] for x in created)})
 class FridgeProductViewSet(viewsets.ModelViewSet):
     serializer_class=FridgeProductSerializer; permission_classes=[AdminWritePermission]
     def get_queryset(self): return FridgeProduct.objects.filter(fridge__store__in=allowed_stores(self.request.user)).select_related('fridge','product')

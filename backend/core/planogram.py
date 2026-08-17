@@ -25,10 +25,10 @@ def parse_planogram(upload):
 
         page.extract_text(visitor_text=collect)
         markers = sorted(
-            [(y, int(match.group(1))) for x, y, value in fragments if 30 <= x <= 90 and (match := re.fullmatch(r"1/(\d+)", value))],
+            [(y, int(match.group(1)), int(match.group(2))) for x, y, value in fragments if 30 <= x <= 90 and (match := re.fullmatch(r"(\d+)/(\d+)", value))],
             reverse=True,
         )
-        for marker_index, (marker_y, shelf) in enumerate(markers):
+        for marker_index, (marker_y, fixture, shelf) in enumerate(markers):
             lower_y = markers[marker_index + 1][0] if marker_index + 1 < len(markers) else 55
             starts = sorted(
                 [(y, int(value)) for x, y, value in fragments if 8 <= x <= 35 and lower_y < y < marker_y and value.isdigit() and 1 <= int(value) <= 100],
@@ -52,6 +52,7 @@ def parse_planogram(upload):
                 if name and (barcode or londis_code):
                     result.append({
                         "page": page_number,
+                        "fixture_number": fixture,
                         "shelf_number": shelf,
                         "position": position,
                         "londis_code": londis_code,
@@ -63,8 +64,8 @@ def parse_planogram(upload):
                         "facings": int(facings) if facings.isdigit() else 1,
                     })
 
-    unique = {(row["shelf_number"], row["position"]): row for row in result}
-    rows = sorted(unique.values(), key=lambda row: (row["shelf_number"], row["position"]))
+    unique = {(row["fixture_number"], row["shelf_number"], row["position"]): row for row in result}
+    rows = sorted(unique.values(), key=lambda row: (row["fixture_number"], row["shelf_number"], row["position"]))
     if not rows:
         raise PlanogramError("No structured product table was found in this PDF.")
     return rows

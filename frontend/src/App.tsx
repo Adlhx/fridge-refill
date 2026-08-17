@@ -90,6 +90,7 @@ type Pick = {
 };
 type ImportRow = {
   page: number;
+  fixture_number: number;
   shelf_number: number;
   position: number;
   londis_code: string;
@@ -104,7 +105,8 @@ type ImportRow = {
 };
 type ImportPreview = {
   rows: ImportRow[];
-  summary: { products: number; shelves: number; matched: number; new: number };
+  fixtures: { fixture_number: number; products: number; shelves: number }[];
+  summary: { products: number; fixtures: number; shelves: number; matched: number; new: number };
 };
 const selected = () => sessionStorage.getItem("store");
 const sessionId = () => sessionStorage.getItem("session");
@@ -1205,6 +1207,7 @@ function LayoutEditor() {
 function LayoutPdfImport({ fridgeId, onApplied }: { fridgeId: string; onApplied: () => Promise<void> }) {
   const [file, setFile] = useState<File>(),
     [preview, setPreview] = useState<ImportPreview>(),
+    [separateFridges, setSeparateFridges] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   async function analyse() {
@@ -1222,19 +1225,19 @@ function LayoutPdfImport({ fridgeId, onApplied }: { fridgeId: string; onApplied:
     }
   }
   async function apply() {
-    if (!preview || !confirm(`Replace this fridge layout with ${preview.summary.products} imported products?`)) return;
+    if (!preview || !confirm(preview.summary.fixtures > 1 && separateFridges ? `Import ${preview.summary.fixtures} bays as separate fridges? The first bay will replace this fridge.` : `Replace this fridge layout with ${preview.summary.products} imported products?`)) return;
     setBusy(true);
     setError("");
     try {
       await api(`/fridges/${fridgeId}/apply-layout-import/`, {
         method: "POST",
-        body: JSON.stringify({ rows: preview.rows }),
+        body: JSON.stringify({ rows: preview.rows, separate_fridges: separateFridges }),
       });
       setPreview(undefined);
       setFile(undefined);
       await onApplied();
     } catch (e: any) {
-      setError(e.data?.rows?.[0] || e.data?.detail || "Could not apply this layout.");
+      setError(e.data?.rows?.[0] || e.data?.detail || "Could not apply this layout. Refresh the fridge page and try again.");
     } finally {
       setBusy(false);
     }
@@ -1266,17 +1269,23 @@ function LayoutPdfImport({ fridgeId, onApplied }: { fridgeId: string; onApplied:
         <>
           <div className="import-summary">
             <strong>
-              {preview.summary.products} products · {preview.summary.shelves} shelves
+              {preview.summary.products} products · {preview.summary.fixtures} {preview.summary.fixtures === 1 ? "bay" : "bays"} · {preview.summary.shelves} shelves
             </strong>
             <span>
               {preview.summary.matched} matched · {preview.summary.new} new
             </span>
           </div>
+          {preview.summary.fixtures > 1 && (
+            <label className="check-label import-bays">
+              <input type="checkbox" checked={separateFridges} onChange={(e) => setSeparateFridges(e.target.checked)} />
+              Create a separate fridge for each detected bay
+            </label>
+          )}
           <div className="import-review">
             {preview.rows.map((row) => (
-              <article key={`${row.shelf_number}-${row.position}`}>
+              <article key={`${row.fixture_number}-${row.shelf_number}-${row.position}`}>
                 <span>
-                  Shelf {row.shelf_number} · {row.position}
+                  Bay {row.fixture_number} · Shelf {row.shelf_number} · {row.position}
                 </span>
                 <strong>{row.name}</strong>
                 <small>
