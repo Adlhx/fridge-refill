@@ -13,6 +13,12 @@ class FlowTests(APITestCase):
     def test_stale_quantity_update_is_rejected(self):
         r=RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4)
         self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':5,'version':1},format='json'); response=self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':9,'version':1},format='json'); self.assertEqual(response.status_code,409)
+    def test_order_delete_is_recoverable(self):
+        response=self.client.delete(f'/api/refill-sessions/{self.session.id}/'); self.assertEqual(response.status_code,200)
+        self.session.refresh_from_db(); self.assertIsNotNone(self.session.deleted_at)
+        self.assertFalse(any(row['id']==self.session.id for row in self.client.get('/api/history/').json()['results']))
+        response=self.client.post(f'/api/refill-sessions/{self.session.id}/restore/'); self.assertEqual(response.status_code,200)
+        self.session.refresh_from_db(); self.assertIsNone(self.session.deleted_at)
     def test_fridge_products_are_in_physical_order(self):
         a=Product.objects.create(name='Product A',sku='A'); b=Product.objects.create(name='Product B',sku='B'); c=Product.objects.create(name='Product C',sku='C')
         FridgeProduct.objects.create(fridge=self.f1,product=b,shelf_number=2,position=1)

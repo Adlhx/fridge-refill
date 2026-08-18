@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Check, ChevronRight, History, Home, PackageCheck, RefreshCw, Search, Settings, Store as StoreIcon, WifiOff } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, History, Home, PackageCheck, RefreshCw, Search, Settings, Store as StoreIcon, Trash2, WifiOff } from "lucide-react";
 import { api, flushQueue, getResults, queueChange, token } from "./lib/api";
 export type Store = {
   id: number;
@@ -890,15 +890,54 @@ function Refill() {
 }
 function HistoryPage() {
   const [items, setItems] = useState<Session[]>([]);
+  const [deleted, setDeleted] = useState<Session>();
+  const [deleting, setDeleting] = useState<number>();
+  const [error, setError] = useState("");
+  const undoTimer = useRef<ReturnType<typeof setTimeout>>();
+  async function load() {
+    const response = await api<any>("/history/");
+    setItems(getResults(response));
+  }
   useEffect(() => {
-    api<any>("/history/").then((x) => setItems(getResults(x)));
+    void load();
+    return () => clearTimeout(undoTimer.current);
   }, []);
+  async function remove(order: Session) {
+    if (!confirm("Delete this order from history? You can undo immediately afterwards.")) return;
+    setDeleting(order.id);
+    setError("");
+    try {
+      await api(`/refill-sessions/${order.id}/`, { method: "DELETE" });
+      setItems((current) => current.filter((item) => item.id !== order.id));
+      setDeleted(order);
+      if (sessionId() === String(order.id)) sessionStorage.removeItem("session");
+      clearTimeout(undoTimer.current);
+      undoTimer.current = setTimeout(() => setDeleted(undefined), 8000);
+    } catch (e: any) {
+      setError(e.data?.detail || "Could not delete this order.");
+    } finally {
+      setDeleting(undefined);
+    }
+  }
+  async function undo() {
+    if (!deleted) return;
+    const order = deleted;
+    clearTimeout(undoTimer.current);
+    try {
+      await api(`/refill-sessions/${order.id}/restore/`, { method: "POST" });
+      setDeleted(undefined);
+      await load();
+    } catch (e: any) {
+      setError(e.data?.detail || "Could not restore this order.");
+    }
+  }
   return (
     <Shell>
       <section className="hero">
         <p className="eyebrow">YOUR ACTIVITY</p>
         <h1>History</h1>
       </section>
+      {error && <p className="error" role="alert">{error}</p>}
       <div className="stack">
         {items.map((s) => (
           <article className="history-card" key={s.id}>
@@ -914,9 +953,13 @@ function HistoryPage() {
               <b>{s.total_units || 0}</b>
               <small>units</small>
             </div>
+            <button className="delete-order" disabled={deleting === s.id} onClick={() => remove(s)} aria-label={`Delete order from ${new Date(s.started_at).toLocaleString()}`}>
+              <Trash2 />
+            </button>
           </article>
         ))}
       </div>
+      {deleted && <div className="undo-toast" role="status"><span><strong>Order deleted</strong><small>You can restore it now.</small></span><button onClick={undo}>Undo</button></div>}
     </Shell>
   );
 }

@@ -119,7 +119,7 @@ class FridgeProductViewSet(viewsets.ModelViewSet):
 class SessionViewSet(viewsets.ModelViewSet):
     serializer_class=SessionSerializer
     def get_queryset(self):
-        q=RefillSession.objects.filter(store__in=allowed_stores(self.request.user)).select_related('store','employee').annotate(checked_count=Count('fridge_checks',filter=models.Q(fridge_checks__completed=True)),total_units=Sum('requirements__required_quantity'))
+        q=RefillSession.objects.filter(store__in=allowed_stores(self.request.user),deleted_at__isnull=True).select_related('store','employee').annotate(checked_count=Count('fridge_checks',filter=models.Q(fridge_checks__completed=True)),total_units=Sum('requirements__required_quantity')).order_by('-started_at')
         q=q if self.request.user.role!=User.Role.EMPLOYEE else q.filter(employee=self.request.user)
         store=self.request.query_params.get('store'); return q.filter(store_id=store) if store else q
     def perform_create(self,s):
@@ -128,6 +128,16 @@ class SessionViewSet(viewsets.ModelViewSet):
         active=self.get_queryset().filter(store=store,employee=self.request.user,status__in=[RefillSession.Status.IN_PROGRESS,RefillSession.Status.PICKING,RefillSession.Status.REFILLING]).first()
         if active: raise ValidationError({'existing_session':active.id})
         s.save(employee=self.request.user)
+    def destroy(self,request,*args,**kwargs):
+        obj=self.get_object(); obj.deleted_at=timezone.now(); obj.save(update_fields=['deleted_at','updated_at'])
+        return Response({'detail':'Order deleted','id':obj.id})
+    @action(detail=True,methods=['post'])
+    def restore(self,request,pk=None):
+        obj=RefillSession.objects.filter(pk=pk,store__in=allowed_stores(request.user),deleted_at__isnull=False).first()
+        if not obj: raise ValidationError({'detail':'This order cannot be restored.'})
+        if request.user.role==User.Role.EMPLOYEE and obj.employee_id!=request.user.id: raise PermissionDenied()
+        obj.deleted_at=None; obj.save(update_fields=['deleted_at','updated_at'])
+        return Response({'detail':'Order restored','id':obj.id})
     @action(detail=True,methods=['post'])
     def generate_pick_list(self,request,pk=None):
         obj=self.get_object(); obj.status=RefillSession.Status.PICKING; obj.save(update_fields=['status','updated_at']); return self.pick_list(request,pk)
