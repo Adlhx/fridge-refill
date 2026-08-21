@@ -10,6 +10,14 @@ class FlowTests(APITestCase):
     def test_pick_list_aggregates_and_preserves_breakdown(self):
         RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4); RefillRequirement.objects.create(refill_session=self.session,fridge=self.f2,product=self.p,required_quantity=6)
         row=self.client.get(f'/api/refill-sessions/{self.session.id}/pick-list/').json()[0]; self.assertEqual(row['total_required'],10); self.assertEqual(sorted(x['required_quantity'] for x in row['breakdown']),[4,6])
+    def test_product_can_be_picked_and_reset_in_one_request(self):
+        first=RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4)
+        second=RefillRequirement.objects.create(refill_session=self.session,fridge=self.f2,product=self.p,required_quantity=6)
+        url=f'/api/refill-sessions/{self.session.id}/set-product-picked/'
+        self.assertEqual(self.client.post(url,{'product':self.p.id,'picked':True},format='json').status_code,200)
+        first.refresh_from_db(); second.refresh_from_db(); self.assertEqual((first.picked_quantity,second.picked_quantity),(4,6))
+        self.client.post(url,{'product':self.p.id,'picked':False},format='json')
+        first.refresh_from_db(); second.refresh_from_db(); self.assertEqual((first.picked_quantity,second.picked_quantity),(0,0))
     def test_stale_quantity_update_is_rejected(self):
         r=RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4)
         self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':5,'version':1},format='json'); response=self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':9,'version':1},format='json'); self.assertEqual(response.status_code,409)

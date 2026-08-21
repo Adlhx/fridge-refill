@@ -139,6 +139,17 @@ class SessionViewSet(viewsets.ModelViewSet):
             row['breakdown']=list(self.get_object().requirements.filter(product_id=row['product'],required_quantity__gt=0).values('fridge','fridge__name','required_quantity','picked_quantity'))
             out.append(row)
         return Response(out)
+    @action(detail=True,methods=['post'],url_path='set-product-picked')
+    def set_product_picked(self,request,pk=None):
+        session=self.get_object(); product_id=request.data.get('product')
+        if product_id is None: raise ValidationError({'product':'This field is required.'})
+        picked=bool(request.data.get('picked',True)); requirements=session.requirements.filter(product_id=product_id,required_quantity__gt=0)
+        if not requirements.exists(): raise ValidationError({'product':'This product is not on the pick list.'})
+        with transaction.atomic():
+            for requirement in requirements.select_for_update():
+                requirement.picked_quantity=requirement.required_quantity if picked else 0; requirement.version+=1
+                requirement.save(update_fields=['picked_quantity','version','updated_at'])
+        return Response({'product':int(product_id),'picked':picked})
     @action(detail=True,methods=['post'])
     def start_refilling(self,request,pk=None):
         obj=self.get_object(); obj.status=RefillSession.Status.REFILLING; obj.save(update_fields=['status','updated_at']); return Response(SessionSerializer(obj,context={'request':request}).data)

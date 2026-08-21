@@ -675,6 +675,7 @@ function CheckFridge() {
 function PickList() {
   const [rows, setRows] = useState<Pick[]>([]),
     [search, setSearch] = useState(""),
+    [saving, setSaving] = useState<Set<number>>(new Set()),
     nav = useNavigate();
   async function load() {
     setRows(await api<Pick[]>(`/refill-sessions/${sessionId()}/pick-list/`));
@@ -685,19 +686,20 @@ function PickList() {
   const shown = rows.filter((x) => `${x.product__name} ${x.product__barcode} ${x.product__sku}`.toLowerCase().includes(search.toLowerCase())),
     done = rows.filter((x) => x.total_picked >= x.total_required).length;
   async function toggle(row: Pick) {
-    const value = row.total_picked >= row.total_required ? 0 : row.total_required;
-    for (const b of row.breakdown) {
-      const all = getResults<Req>(await api<any>(`/requirements/?refill_session=${sessionId()}&fridge=${b.fridge}&product=${row.product}`));
-      if (all[0])
-        await api(`/requirements/${all[0].id}/`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            picked_quantity: value ? b.required_quantity : 0,
-            version: all[0].version,
-          }),
-        });
+    if (saving.has(row.product)) return;
+    const picked = row.total_picked < row.total_required;
+    setRows((current) => current.map((item) => item.product === row.product ? { ...item, total_picked: picked ? item.total_required : 0 } : item));
+    setSaving((current) => new Set(current).add(row.product));
+    try {
+      await api(`/refill-sessions/${sessionId()}/set-product-picked/`, {
+        method: "POST",
+        body: JSON.stringify({ product: row.product, picked }),
+      });
+    } catch {
+      setRows((current) => current.map((item) => item.product === row.product ? { ...item, total_picked: row.total_picked } : item));
+    } finally {
+      setSaving((current) => { const next = new Set(current); next.delete(row.product); return next; });
     }
-    await load();
   }
   return (
     <Shell>
@@ -724,7 +726,7 @@ function PickList() {
           const complete = row.total_picked >= row.total_required;
           return (
             <article className={complete ? "pick-row complete" : "pick-row"} key={row.product}>
-              <button className="check" aria-label={`Mark ${row.product__name} ${complete ? "not collected" : "collected"}`} onClick={() => toggle(row)}>
+              <button className="check" aria-label={`Mark ${row.product__name} ${complete ? "not collected" : "collected"}`} aria-busy={saving.has(row.product)} onClick={() => toggle(row)}>
                 {complete && <Check />}
               </button>
               <div>
@@ -804,11 +806,15 @@ function Refill() {
   );
   async function mark(g: any) {
     let c: any = checks.find((x) => x.fridge === g.fridge);
+    const refilled = !c?.refilled;
+    if (c) setChecks((items) => items.map((item) => item.id === c.id ? { ...item, refilled } : item));
     if (c)
-      await api(`/fridge-checks/${c.id}/`, {
-        method: "PATCH",
-        body: JSON.stringify({ refilled: true }),
-      });
+      try {
+        c = await api(`/fridge-checks/${c.id}/`, { method: "PATCH", body: JSON.stringify({ refilled }) });
+      } catch (error) {
+        setChecks((items) => items.map((item) => item.id === c.id ? { ...item, refilled: !refilled } : item));
+        throw error;
+      }
     else
       c = await api<any>("/fridge-checks/", {
         method: "POST",
@@ -866,8 +872,8 @@ function Refill() {
                     ))}
                 </section>
               ))}
-              <button disabled={complete} onClick={() => mark(g)}>
-                {complete ? "Fridge refilled" : "Mark fridge refilled"}
+              <button className={complete ? "reset-refill" : ""} onClick={() => mark(g)}>
+                {complete ? "Reset fridge" : "Mark fridge refilled"}
               </button>
             </article>
           );
