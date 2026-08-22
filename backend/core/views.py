@@ -150,6 +150,14 @@ class SessionViewSet(viewsets.ModelViewSet):
                 requirement.picked_quantity=requirement.required_quantity if picked else 0; requirement.version+=1
                 requirement.save(update_fields=['picked_quantity','version','updated_at'])
         return Response({'product':int(product_id),'picked':picked})
+    @action(detail=True,methods=['post'],url_path='reset-round')
+    def reset_round(self,request,pk=None):
+        session=self.get_object()
+        with transaction.atomic():
+            session.fridge_checks.all().delete(); session.requirements.all().delete(); session.shortages.all().delete()
+            session.status=RefillSession.Status.IN_PROGRESS; session.completed_at=None
+            session.save(update_fields=['status','completed_at','updated_at'])
+        return Response({'detail':'Refill round reset.'})
     @action(detail=True,methods=['post'])
     def start_refilling(self,request,pk=None):
         obj=self.get_object(); obj.status=RefillSession.Status.REFILLING; obj.save(update_fields=['status','updated_at']); return Response(SessionSerializer(obj,context={'request':request}).data)

@@ -1,5 +1,6 @@
 from django.urls import reverse
 from django.core.management import call_command
+from django.utils import timezone
 from rest_framework.test import APITestCase
 from core.models import *
 class FlowTests(APITestCase):
@@ -18,6 +19,15 @@ class FlowTests(APITestCase):
         first.refresh_from_db(); second.refresh_from_db(); self.assertEqual((first.picked_quantity,second.picked_quantity),(4,6))
         self.client.post(url,{'product':self.p.id,'picked':False},format='json')
         first.refresh_from_db(); second.refresh_from_db(); self.assertEqual((first.picked_quantity,second.picked_quantity),(0,0))
+    def test_reset_round_clears_all_progress_and_pick_data(self):
+        self.session.status=RefillSession.Status.COMPLETED; self.session.completed_at=timezone.now(); self.session.save()
+        FridgeCheck.objects.create(refill_session=self.session,fridge=self.f1,checked_by=self.u,completed=True,refilled=True)
+        RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4,picked_quantity=4)
+        StockShortage.objects.create(refill_session=self.session,product=self.p,required_quantity=4,found_quantity=2,short_quantity=2,reported_by=self.u)
+        response=self.client.post(f'/api/refill-sessions/{self.session.id}/reset-round/')
+        self.assertEqual(response.status_code,200); self.session.refresh_from_db()
+        self.assertEqual(self.session.status,RefillSession.Status.IN_PROGRESS); self.assertIsNone(self.session.completed_at)
+        self.assertFalse(self.session.fridge_checks.exists()); self.assertFalse(self.session.requirements.exists()); self.assertFalse(self.session.shortages.exists())
     def test_stale_quantity_update_is_rejected(self):
         r=RefillRequirement.objects.create(refill_session=self.session,fridge=self.f1,product=self.p,required_quantity=4)
         self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':5,'version':1},format='json'); response=self.client.patch(f'/api/requirements/{r.id}/',{'required_quantity':9,'version':1},format='json'); self.assertEqual(response.status_code,409)

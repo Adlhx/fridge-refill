@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Check, ChevronRight, History, Home, PackageCheck, RefreshCw, Search, Settings, Store as StoreIcon, WifiOff } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, History, Home, PackageCheck, RefreshCw, RotateCcw, Search, Settings, Store as StoreIcon, WifiOff } from "lucide-react";
 import { api, flushQueue, getResults, queueChange, token } from "./lib/api";
 export type Store = {
   id: number;
@@ -420,6 +420,7 @@ function Shell({ children, title }: { children: React.ReactNode; title?: string 
 function Fridges() {
   const [items, setItems] = useState<Fridge[]>([]),
     [checks, setChecks] = useState<any[]>([]),
+    [resetting, setResetting] = useState(false),
     nav = useNavigate(),
     store = JSON.parse(selected() || "null");
   useEffect(() => {
@@ -449,6 +450,23 @@ function Fridges() {
           />
         </div>
       </section>
+      <div className="round-actions">
+        <button
+          disabled={resetting}
+          onClick={async () => {
+            if (!confirm("Reset every fridge and clear the full pick list? This starts the refill round again from the beginning.")) return;
+            setResetting(true);
+            try {
+              await api(`/refill-sessions/${sessionId()}/reset-round/`, { method: "POST" });
+              setChecks([]);
+            } finally {
+              setResetting(false);
+            }
+          }}
+        >
+          <RotateCcw /> {resetting ? "Resetting…" : "Reset all"}
+        </button>
+      </div>
       <div className="stack fridge-grid">
         {items.map((f, i) => {
           const check = checks.find((c) => c.fridge === f.id);
